@@ -5,13 +5,15 @@
 
 ## Current State
 
-- **Bankroll:** $499.71 USDC on Hyperliquid mainnet (Perps account) — unchanged across Sessions 9/10/11. No LIVE trades have fired yet; Session 10's 7 LIVE ticks and Session 11's pre-incident LIVE ticks all resulted in `No signals this tick` (recent confluence has been 0/3 for days).
+- **Bankroll:** $499.71 USDC on Hyperliquid mainnet (Perps account) — unchanged across Sessions 9-12. No LIVE trades have fired yet; all ticks result in `No signals this tick` (bearish macro, confluence 0/3).
 - **Master wallet:** `0x3a8a318097017aCE0db8276ea435F26DE8674C46` (MetaMask)
 - **API wallet (agent):** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (Hyperliquid — trade-only, no withdraw permission)
 - **Network:** mainnet
-- **Mode:** **DRY_RUN** — reverted from LIVE during Session 11 after an OOM incident from a bad Next.js dev server config froze the laptop and silenced the LIVE bot for ~3h (16:41 → 21:54 UTC). Bot recovered cleanly (0 positions the whole time, no orphans), but user restarted it in DRY_RUN rather than LIVE to build frontend + risk-persistence infra without real-money exposure. Still running Session 9's code + Session 11's new risk-state hydration. Week-1 clamps still active in source. Killed state: `false` (post-recovery resume at 22:10:41 UTC).
+- **Mode:** **LIVE** — re-flipped at Session 12 start (2026-04-13). Hydration validated on this restart (`[Bot] Hydrated risk state from 2026-04-11T21:28:13`). 20+ clean ticks observed. Balance stable. Week-1 clamps still active in source. Killed state: `false`.
 - **Strategy:** BTC perpetual futures, 3 strategies (S1/S2/S3), multi-timeframe confluence
-- **Last session:** 11 — 2026-04-11 — **Frontend app buildout + risk state persistence.** Built (app) route group with Dashboard/Trades/Strategies/Automation pages + nav; hit a brutal OOM crash-loop from a Next 16 `next.config.ts` ESM/CJS interop bug that froze the laptop and took out the LIVE bot as collateral damage; switched config to CJS `next.config.js` (definitive fix, tracks Next docs); shipped risk state hydration (migration 008 + `loadLatestRiskState` + `hydrateState` + 5-case test script) so future restarts preserve daily PnL, consecutive losses, auto-pause timers, and kill state. 4 tasks closed (#13, #17 partial, #19, #22).
+- **GitHub:** `github.com/bugiiiii11/TradeKit` — 10 commits, auto-deploys to Vercel
+- **Vercel:** `trade-kit.vercel.app` — frontend dashboard (Next.js 16, Supabase auth)
+- **Last session:** 12 — 2026-04-13 — **GitHub/Vercel deployment + Market Data page + design overhaul.** Pushed codebase to GitHub, deployed frontend to Vercel, built Market Data page (CoinGecko prices + BTC technicals), switched auth to email/password, overhauled design (fintech color system, card hover effects, scroll animations, mobile nav). Re-flipped to LIVE; hydration path validated.
 
 ## Architecture
 
@@ -660,6 +662,51 @@ Residual risk in LIVE: if the laptop sleeps while a position is open, the bot go
 - **Supabase data verification for Session 9 side effects.** Still unverified whether the old DRY_RUN bot's `syncPositions` fired during Session 9's test windows. Low priority — will be exercised naturally on first LIVE trade.
 - **Fixing the TV-after-sleep bug.** Operational mitigation only.
 
+## What Was Done (Session 12) — GitHub/Vercel deployment + Market Data page + design overhaul
+
+> **Frontend-focused session.** No bot source changes — the LIVE bot ran undisturbed the entire session. Re-flipped to LIVE mode at session start; hydration path validated on real restart. Pushed codebase to GitHub, deployed frontend to Vercel, and built a comprehensive Market Data page with design improvements across all pages.
+
+### 1. GitHub + Vercel deployment
+- Initialized git repo, pushed to `github.com/bugiiiii11/TradeKit` (10 commits by session end)
+- Connected to Vercel — frontend auto-deploys on push to `trade-kit.vercel.app`
+- Fixed: `frontend/` had its own `.git` (embedded repo) — removed, added as regular files
+- Added `debug.log` to `.gitignore`
+
+### 2. Auth: magic link → email/password
+- Replaced `signInWithOtp` with `signInWithPassword` in login form
+- Created user `contact@mdntech.org` via Supabase admin API (one-time script, deleted after use)
+- Files: `frontend/src/app/login/actions.ts`, `login-form.tsx`, `page.tsx`
+
+### 3. Market Data page (new)
+- **Market Overview**: CoinGecko API for BTC, ETH, SOL, BNB prices with 1h/24h/7d changes (60s ISR cache)
+- **Market Metrics**: Total market cap, BTC/ETH dominance, Fear & Greed index (alternative.me), BTC funding rate
+- **BTC Technical Dashboard**: Macro filter, momentum (RSI/StochRSI), volatility (BBWP/PMARP), EMA alignment — all from existing `market_snapshots` in Supabase, with plain-English explanations
+- No bot changes needed — prices from CoinGecko, technicals from existing bot data
+- File: `frontend/src/app/(app)/market-data/page.tsx`
+
+### 4. Mobile optimization
+- Bottom tab bar with 5 icons (Home, Market, Trades, Strategy, Auto) — `frontend/src/components/mobile-nav.tsx`
+- Bot logs: stacked layout on mobile instead of multi-column
+- Automation table: hides Duration/Reason/Result columns on mobile
+- Safe area padding for iPhone home indicator
+- Viewport meta with `viewport-fit: cover`
+
+### 5. Design overhaul (fintech color system)
+- **Color system**: cyan-teal accent (hue 195), navy-slate dark backgrounds, cool gray light backgrounds
+- **Theme toggle**: simplified to single-click light/dark (removed System option)
+- **Card hover effects**: stat cards lift 2px with cyan glow border + shadow on hover (both themes)
+- **Card borders**: visible at rest — white-ish on dark (18% opacity), dark on light (22% opacity)
+- **Scroll animations**: `AnimateIn` component using IntersectionObserver — all 5 pages
+- **Header**: gradient accent line, logo hover scale + cyan text, button hover effects (theme=cyan, signout=red)
+- **Header fixed**: switched from `sticky` to `fixed top-0` for reliable always-on-top
+- **Renamed**: "TradingBot" → "TradeKit" in header
+
+### 6. LIVE mode re-flip
+- User started bot with `$env:DRY_RUN="false"; npm start`
+- Hydration validated: `[Bot] Hydrated risk state from 2026-04-11T21:28:13` — first real exercise of Session 11's hydration code
+- `daily_start_bankroll` column writes now active (running Session 11 code)
+- 20+ clean LIVE ticks observed, balance stable at $499.71, 0 signals (bearish macro)
+
 ## What Was Done (Session 11) — Frontend app buildout + risk state persistence + Next 16 config war
 
 > **Mixed build + incident session.** Shipped 3 new frontend pages and a proper risk-state hydration system (task #13, long-outstanding). Hit a brutal Next 16 config ESM/CJS interop bug that OOM-crashloop'd the laptop and took out the LIVE bot as collateral damage. Bot recovered cleanly (0 positions the whole time) but was restarted in DRY_RUN to build infrastructure under safer conditions.
@@ -813,17 +860,11 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 
 ## What To Do Next
 
-> **Next session plan (Session 12):** **Decide: re-flip to LIVE, or keep building in DRY_RUN?** The OOM incident interrupted Session 10's LIVE week but didn't break anything on the exchange side. Two reasonable paths:
+> **Next session plan (Session 13):** Bot is LIVE and running. Keep it running 24/7 and wait for the first trade. Session 12 completed Path A (re-flip to LIVE) and validated hydration. The main priorities now are:
 >
-> **Path A — re-flip to LIVE immediately.** Session 9's code + Session 11's hydration is stable. Restart bot with `$env:DRY_RUN="false"; npm start`. Verify `Mode: LIVE` banner. Observe for a few ticks. Extend week-1 clamp window to 2026-04-25 (1 week from re-flip) since we lost ~3 days of LIVE observation time.
->
-> **Path B — keep in DRY_RUN and harden more first.** Do #21 (TV sleep recovery) + mobile nav + command toast. Re-flip after those land. Lower immediate risk, slower validation of the risk persistence path in a real LIVE startup.
->
-> My recommendation: **Path A**, but only if user is at the laptop and actively watching. The hydration code deserves a real LIVE restart to exercise it. And the OOM incident is now impossible to repeat (CJS config = bulletproof).
-
-> **First priority on resume:** check bot PS window state. If it's still ticking in DRY_RUN from Session 11 wrap, don't restart unnecessarily — the next restart is the first real exercise of the hydration path, and we want it to land in the bot logs for verification.
->
-> **When the first LIVE signal finally lands:** expected log sequence is (a) `[Bot] Signals: S?:direction`, (b) `[Bot] Confluence: score=N, direction=X, leverage=Yx`, (c) `[Bot] Week-1 cap: clamping leverage Yx → 2x` **(new — still unobserved)**, (d) `[Bot] Week-1 cap: clamping risk N% → 1%` **(new — still unobserved)**, (e) `[Bot] Sizing: $N notional, $M margin, risk $R`, (f) either `Trade blocked: ...` or an entry + stop + Supabase writes + `trades` table row.
+> 1. **Wait for first LIVE trade** — market is bearish (price 14% below EMA200). S3 short is the most likely signal. When it fires, expected log sequence: (a) `[Bot] Signals: S?:direction`, (b) `[Bot] Confluence: score=N`, (c) `[Bot] Week-1 cap: clamping leverage Yx → 2x` **(still unobserved)**, (d) `[Bot] Week-1 cap: clamping risk N% → 1%` **(still unobserved)**, (e) `[Bot] Sizing: ...`, (f) entry + stop + Supabase writes.
+> 2. **Vercel setup** — add Supabase env vars (#28) and update Auth redirect URLs (#27) so the deployed frontend at `trade-kit.vercel.app` can actually authenticate.
+> 3. **TV sleep recovery (#21)** — biggest reliability risk if laptop sleeps while bot runs.
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
@@ -850,9 +891,11 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 | 21 | **TradingView Desktop state loss on Windows sleep** | med | **Discovered Session 10.** After laptop sleep, TV Desktop loses its chart/indicators and `data_get_study_values` returns 0 studies → bot goes blind until TV is relaunched. Per-tick `try/catch` prevents crash but LIVE positions would have stale `checkExits`. Operational mitigation for week 1: keep laptop awake on AC power. Longer-term code fix: add a TV-state sanity check at bot startup and/or on persistent empty-study errors (would go in `src/tradingview/reader.ts` + `src/main.ts`). **Session 11 punted this deliberately to avoid another main-loop change same-session as the OOM incident.** Top candidate for Session 12 if user picks Path B. |
 | 22 | ~~**Verify frontend `turbopack.root` fix landed**~~ | — | ✅ **Done Session 11 — the hard way.** Session 10's `next.config.ts` was actually broken (ESM/CJS interop, `ReferenceError: exports is not defined`). Session 11's first follow-up (`process.cwd()`) was ALSO broken — caused the Turbopack OOM crash-loop that froze the laptop and killed the LIVE bot for 3h. **Final fix:** switched to `next.config.js` (CJS) using `__dirname`, which matches the canonical Next docs example and works first-try. Verified end-to-end: `next build` clean, `next dev` ready in 1.17s, all 4 app routes respond correctly. See Session 11 writeup section 2 for the full incident postmortem. |
 | 23 | **Frontend Backtests page stub** | trivial | Only remaining piece of task #17. Reads `backtest_runs` — currently 0 rows. Adds `(app)/backtests/page.tsx` with a table that shows an empty state until a backtest engine exists. Zero-risk UI work, defer until backtest engine is built. |
-| 24 | **Frontend mobile nav** | trivial | `MainNav` is `hidden md:flex`, so mobile users see no navigation. Add a hamburger drawer (shadcn `Sheet` or similar). Only matters if you plan to use the dashboard from a phone. |
+| 24 | ~~**Frontend mobile nav**~~ | — | ✅ **Done Session 12.** Bottom tab bar with 5 icons, hidden on desktop, safe area padding. |
 | 25 | **Frontend command execution toast** | trivial | Current `KillSwitchButton` shows sonner toast on result but not on command submission. Quick UX polish: show "Kill command sent…" immediately, then replace with the result toast when the bot finishes. |
-| 26 | **Real LIVE restart to exercise hydration path** | low | The `test_risk_hydration.ts` script validates the functions, but the actual `main.ts` call site hasn't fired with hydration logic in a real restart yet. The next bot restart (whether DRY_RUN or LIVE) will emit the `[Bot] Hydrated risk state from …` log line for the first time. Confirm it appears and matches expectations. |
+| 26 | ~~**Real LIVE restart to exercise hydration path**~~ | — | ✅ **Done Session 12.** LIVE restart emitted `[Bot] Hydrated risk state from 2026-04-11T21:28:13` with correct values. |
+| 27 | **Supabase Auth: update Site URL + Redirect URLs for Vercel** | low | Currently set to `http://localhost:3000`. Add `https://trade-kit.vercel.app` to Supabase Auth settings (Site URL + Redirect URLs) to enable login from the deployed frontend. |
+| 28 | **Frontend: add Vercel env vars** | low | Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in Vercel dashboard for the deployed frontend to connect to Supabase. |
 
 ## Untested Code Paths
 
@@ -864,8 +907,8 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 | ~~Stop-loss auto-cancel on position close~~ | ✅ **Validated Session 9** — `test_stop_cleanup.ts`. Also discovered Hyperliquid natively removes reduce-only triggers on close | — |
 | ~~`main.ts` long-running loop~~ | ✅ **Validated Session 3** — 12 consecutive ticks, 15-min cadence, ~2.5h clean run | — |
 | ~~Risk manager state persistence~~ | ✅ **Validated Session 11** — `test_risk_hydration.ts` 5/5 pass (integration + unit). Migration 008 + `loadLatestRiskState()` + `hydrateState()`. Real-restart call-site still unobserved (see new entry below). | — |
-| **Risk state hydration on real bot startup (Session 11)** | Functions tested via test script, but the actual `main.ts` call site hasn't fired in a real restart yet — only the test script's synthetic invocation. | Hydration could silently fail on first real restart; fallback path prints warning but state resets to fresh. Will exercise naturally on next `npm start`. |
-| **`daily_start_bankroll` column writes from live bot (Session 11)** | Schema column added Session 11, `writeRiskSnapshot()` updated to include it, but the current DRY_RUN bot was started BEFORE the code change landed — it's running Session 9 code in memory, not Session 11's. Will only write the new column after a bot restart. | Until restart, `risk_snapshots` rows will have `daily_start_bankroll = NULL`. Post-restart, new rows populate it. Old rows stay NULL forever (loader handles via `toNumber(… , 0)` fallback). |
+| ~~**Risk state hydration on real bot startup (Session 11)**~~ | ✅ **Validated Session 12** — LIVE restart at session start emitted `[Bot] Hydrated risk state from 2026-04-11T21:28:13` with correct values (bankroll=$499.71, dailyPnl=$0, losses=0, paused=no, killed=false). | — |
+| ~~**`daily_start_bankroll` column writes from live bot (Session 11)**~~ | ✅ **Validated Session 12** — bot restarted with Session 11's code; new `risk_snapshots` rows now include `daily_start_bankroll` values. | — |
 | **Command bus startup sweep with actual pending commands (retired)** | ✅ **Validated Session 11** (unintentionally) — pending `kill_switch` from 19:07 UTC was consumed by the startup sweep when the bot restarted at 21:54 UTC after the OOM incident. Activated killed state with 0 closed positions. | — |
 | **`insertClosedTrade` (Session 6)** | DRY_RUN doesn't close trades — code path never runs | Closed trades silently fail to persist on first LIVE close; audit trail missing |
 | **`syncPositions` upsert path (Session 6)** | Still unverified. The old DRY_RUN bot may have seen brief positions during Session 9's test windows — but even so, Session 10's LIVE bot has had 0 positions the whole time. Will fire naturally on first LIVE trade entry. | Open positions wouldn't appear in `positions` table on first LIVE trade |
@@ -926,8 +969,9 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 ## Background Processes (when you last left)
 
 - **TradingView Desktop** with CDP port 9222 — user relaunched mid-Session 11 after the OOM incident. Chart is `BINANCE:BTCUSDC` with 9 indicators loaded. Relaunch via `launch_tradingview.ps1` if needed.
-- **DRY_RUN bot (Session 11 recovery)** — ✅ **RUNNING** in a PowerShell window at Session 11 wrap. Restarted at 21:54 UTC after the OOM incident (see Session 11 writeup section 2). **Mode: DRY_RUN** (not LIVE — user chose to finish the session under safer conditions). Running Session 9's code + Session 11's frontend/risk work. Week-1 clamps still active in source. Killed state: `false` (resumed at 22:10:41 UTC after pending kill_switch was consumed by startup sweep). Balance $499.71. 0 positions, 0 orders. **Dashboard screenshot confirmed recent ticks at 22:09:40 + 21:54:09.** ⚠ **Important:** this bot is NOT running Session 11's new risk hydration code path at the call site — it was started BEFORE those edits landed in memory. Next restart will be the first real exercise of the hydration flow. See untested-path entries for `daily_start_bankroll` column writes and "Risk state hydration on real bot startup".
-- **LIVE bot (Session 10)** — 💀 **DEAD.** Went silent at 2026-04-11 16:41:25 UTC after Session 11's OOM crash-loop starved it out of memory. 3h of silence (16:41 → 19:37 UTC confirmed via Supabase query). Replaced by the Session 11 DRY_RUN bot above at 21:54 UTC. No trades lost, no positions orphaned — bot was flat the whole time and the recovery sequence (pending kill → auto-consume → user resume) was clean.
+- **LIVE bot (Session 12)** — ✅ **RUNNING** in a PowerShell window. Started at Session 12 start (2026-04-13) with `$env:DRY_RUN="false"; npm start`. **Mode: LIVE.** Running Session 11's code (including risk hydration). Hydration validated on startup. Week-1 clamps still active in source. Killed state: `false`. Balance $499.71. 0 positions, 0 orders. 20+ clean ticks observed. No signals (bearish macro, confluence 0/3).
+- **DRY_RUN bot (Session 11)** — 💀 **DEAD.** Replaced by the Session 12 LIVE bot above.
+- **LIVE bot (Session 10)** — 💀 **DEAD.** Replaced during Session 11 recovery.
 - **tradingview-mcp** — spawned as a child by the active bot. Lives as long as the parent. Will die on Ctrl+C of the bot.
 - **Old DRY_RUN bot (Session 8 legacy)** — 💀 **DEAD.** Shut down cleanly during Session 10 Stage 1 (SIGINT flush confirmed). Do not resurrect — its code was stale.
 - **Supabase project** `gseztkzguxasfwqnztuo` — Phase 1 schema + command bus realtime publication applied. 11 tables, RLS, **8 migrations (new: 008_risk_snapshot_daily_start — adds `daily_start_bankroll NUMERIC NULL` column to `risk_snapshots` for restart hydration, Session 11).** New rows from Session 11: additional `bot_commands` (pending kill_switch at 21:07 UTC consumed on recovery, plus manual resume), more `market_snapshots` / `risk_snapshots` / `bot_logs` from the pre-incident LIVE ticks and post-incident DRY_RUN ticks. No `trades` or `positions` rows from Session 11 (no signals fired under either mode). Test script `test_risk_hydration.ts` wrote + deleted one synthetic `risk_snapshots` row (id=46, cleaned up in finally block).
@@ -936,7 +980,7 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 - **Supabase MCP** — **LIVE and working.** Session 5 workaround (a) still persistent. Same config as Sessions 6/7/8/9 — no action needed.
 - **Supabase Realtime** — **LIVE.** Bot holds a WebSocket channel named `bot_commands_stream` subscribed to `postgres_changes` INSERT events on `public.bot_commands`. Auto-reconnect validated Session 10; pending-row sweep validated Session 11 (pending kill_switch consumed on post-OOM restart).
 - **Supabase log sink** — still installed in the current DRY_RUN bot process. `SIGINT` flush validated across multiple Ctrl+C events in prior sessions. `beforeExit`/buffer-overflow paths still untested.
-- **Frontend dev server** — **RUNNING** on http://localhost:3000 (Next.js 16.2.3 Turbopack). Session 11 migrated the config from `next.config.ts` → `next.config.js` (CJS with `__dirname`), which definitively silences the "multiple lockfiles" warning. Verified via `next build` (clean) and `next dev` (Ready in 1.17s, no warning). Closes task #22. The dev server is running in a background bash task at wrap time — user can stop it whenever. All 4 app routes (/, /trades, /strategies, /automation) respond correctly.
+- **Frontend dev server** — may or may not be running on http://localhost:3000. Session 12 did repeated `next build` but dev server state is unknown. All 5 app routes (/, /market-data, /trades, /strategies, /automation) respond correctly. **Vercel deployment** at `trade-kit.vercel.app` auto-deploys on push to `main`.
 - **Safety hooks** — partially active. `protect-files.sh` worked without jq through this session too. Install jq to activate the remaining hooks (audit-all, scan-injection, block-dangerous, block-internal-urls).
 
 ## Security Notes
