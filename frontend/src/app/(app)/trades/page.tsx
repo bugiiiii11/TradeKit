@@ -24,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AnimateIn } from "@/components/animate-in";
 import { formatPrice, formatTime, formatUsd } from "@/lib/format";
 
 type Trade = {
@@ -73,7 +74,7 @@ export default async function TradesPage() {
         </p>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <AnimateIn className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard
           title="Total PnL"
           value={formatUsd(stats.totalPnlUsd)}
@@ -105,8 +106,9 @@ export default async function TradesPage() {
             stats.worst !== null ? `Worst ${formatUsd(stats.worst)}` : "—"
           }
         />
-      </div>
+      </AnimateIn>
 
+      <AnimateIn delay={100}>
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -197,6 +199,7 @@ export default async function TradesPage() {
           )}
         </CardContent>
       </Card>
+      </AnimateIn>
     </>
   );
 }
@@ -284,15 +287,15 @@ function StatCard({
         ? "text-destructive"
         : "";
   return (
-    <Card>
+    <Card className="stat-card">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           {title}
         </CardTitle>
-        <div className="text-muted-foreground">{icon}</div>
+        <div className="rounded-md bg-muted/60 p-1.5 text-muted-foreground">{icon}</div>
       </CardHeader>
       <CardContent>
-        <div className={`text-2xl font-semibold tabular-nums ${valueClass}`}>
+        <div className={`text-2xl font-bold tabular-nums tracking-tight ${valueClass}`}>
           {value}
         </div>
         {hint && (

@@ -8,6 +8,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { AnimateIn } from "@/components/animate-in";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -80,7 +81,7 @@ export default async function AutomationPage() {
         </p>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <AnimateIn className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard
           title="Total"
           value={`${total}`}
@@ -106,8 +107,9 @@ export default async function AutomationPage() {
           icon={<Clock className="h-4 w-4" />}
           hint={inFlight ? `${inFlight} in-flight` : "Nothing pending"}
         />
-      </div>
+      </AnimateIn>
 
+      <AnimateIn delay={100}>
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -184,6 +186,7 @@ export default async function AutomationPage() {
           )}
         </CardContent>
       </Card>
+      </AnimateIn>
     </>
   );
 }
@@ -202,22 +205,22 @@ function StatCard({
   tone?: "default" | "destructive";
 }) {
   return (
-    <Card>
+    <Card className="stat-card">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           {title}
         </CardTitle>
         <div
-          className={
-            tone === "destructive" ? "text-destructive" : "text-muted-foreground"
-          }
+          className={`rounded-md p-1.5 ${
+            tone === "destructive" ? "bg-destructive/10 text-destructive" : "bg-muted/60 text-muted-foreground"
+          }`}
         >
           {icon}
         </div>
       </CardHeader>
       <CardContent>
         <div
-          className={`text-2xl font-semibold tabular-nums ${
+          className={`text-2xl font-bold tabular-nums tracking-tight ${
             tone === "destructive" ? "text-destructive" : ""
           }`}
         >

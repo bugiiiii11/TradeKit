@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { AnimateIn } from "@/components/animate-in";
 import { formatUsd } from "@/lib/format";
 
 type StrategyTemplate = {
@@ -106,6 +107,7 @@ export default async function StrategiesPage() {
         </p>
       </div>
 
+      <AnimateIn>
       {templates.length === 0 ? (
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -132,6 +134,7 @@ export default async function StrategiesPage() {
           })}
         </div>
       )}
+      </AnimateIn>
 
       <p className="mt-6 text-center text-xs text-muted-foreground">
         Strategy parameters are defined in{" "}

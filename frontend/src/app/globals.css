@@ -138,10 +138,19 @@
   }
 }
 
+/* ── Card border tint ── */
+.dark [data-slot="card"] {
+  border: 1px solid oklch(0.72 0.14 195 / 8%);
+}
+:root:not(.dark) [data-slot="card"] {
+  border: 1px solid oklch(0.45 0.12 200 / 12%);
+  box-shadow: 0 1px 3px oklch(0.45 0.12 200 / 5%);
+}
+
 /* ── Stat card glow effect ── */
 .stat-card {
   position: relative;
-  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
+  transition: transform 200ms ease-out, box-shadow 200ms ease-out, border-color 200ms ease-out;
 }
 .stat-card::before {
   content: "";
@@ -155,7 +164,15 @@
 .dark .stat-card::before {
   background: linear-gradient(
     135deg,
-    oklch(0.72 0.14 195 / 6%) 0%,
+    oklch(0.72 0.14 195 / 10%) 0%,
+    oklch(0.72 0.14 195 / 3%) 40%,
+    transparent 70%
+  );
+}
+:root:not(.dark) .stat-card::before {
+  background: linear-gradient(
+    135deg,
+    oklch(0.45 0.12 200 / 6%) 0%,
     transparent 60%
   );
 }
@@ -163,12 +180,14 @@
   transform: translateY(-2px);
 }
 .dark .stat-card:hover {
-  box-shadow: 0 4px 24px oklch(0.72 0.14 195 / 8%),
-    0 0 0 1px oklch(0.72 0.14 195 / 12%);
+  border-color: oklch(0.72 0.14 195 / 30%);
+  box-shadow: 0 4px 20px oklch(0.72 0.14 195 / 12%),
+    0 8px 40px oklch(0.72 0.14 195 / 6%);
 }
-:root .stat-card:hover {
-  box-shadow: 0 4px 24px oklch(0.45 0.12 200 / 10%),
-    0 0 0 1px oklch(0.45 0.12 200 / 15%);
+:root:not(.dark) .stat-card:hover {
+  border-color: oklch(0.45 0.12 200 / 25%);
+  box-shadow: 0 4px 20px oklch(0.45 0.12 200 / 12%),
+    0 8px 40px oklch(0.45 0.12 200 / 6%);
 }
 .stat-card:hover::before {
   opacity: 1;
