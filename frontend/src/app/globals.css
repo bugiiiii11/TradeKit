@@ -138,13 +138,13 @@
   }
 }
 
-/* ── Card border tint ── */
+/* ── Card borders — visible at rest, accent glow on hover ── */
 .dark [data-slot="card"] {
-  border: 1px solid oklch(0.72 0.14 195 / 8%);
+  border: 1px solid oklch(0.96 0.005 260 / 18%);
 }
 :root:not(.dark) [data-slot="card"] {
-  border: 1px solid oklch(0.45 0.12 200 / 12%);
-  box-shadow: 0 1px 3px oklch(0.45 0.12 200 / 5%);
+  border: 1px solid oklch(0.15 0.01 260 / 16%);
+  box-shadow: 0 1px 4px oklch(0.15 0.01 260 / 6%);
 }
 
 /* ── Stat card glow effect ── */
@@ -180,14 +180,14 @@
   transform: translateY(-2px);
 }
 .dark .stat-card:hover {
-  border-color: oklch(0.72 0.14 195 / 30%);
-  box-shadow: 0 4px 20px oklch(0.72 0.14 195 / 12%),
-    0 8px 40px oklch(0.72 0.14 195 / 6%);
+  border-color: oklch(0.72 0.14 195 / 40%);
+  box-shadow: 0 4px 20px oklch(0.72 0.14 195 / 14%),
+    0 8px 40px oklch(0.72 0.14 195 / 8%);
 }
 :root:not(.dark) .stat-card:hover {
-  border-color: oklch(0.45 0.12 200 / 25%);
-  box-shadow: 0 4px 20px oklch(0.45 0.12 200 / 12%),
-    0 8px 40px oklch(0.45 0.12 200 / 6%);
+  border-color: oklch(0.30 0.10 200 / 40%);
+  box-shadow: 0 4px 20px oklch(0.30 0.10 200 / 10%),
+    0 8px 40px oklch(0.30 0.10 200 / 5%);
 }
 .stat-card:hover::before {
   opacity: 1;
