@@ -1,4 +1,5 @@
 import { SiteHeader } from "@/components/site-header";
+import { MobileNav } from "@/components/mobile-nav";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -22,9 +23,10 @@ export default async function AppLayout({
   return (
     <>
       <SiteHeader email={user?.email} />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 pb-20 sm:px-6 sm:py-8 md:pb-8">
         {children}
       </main>
+      <MobileNav />
     </>
   );
 }

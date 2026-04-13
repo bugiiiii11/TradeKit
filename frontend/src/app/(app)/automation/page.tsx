@@ -139,11 +139,11 @@ export default async function AutomationPage() {
                     <TableHead className="whitespace-nowrap">Issued</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="whitespace-nowrap">
+                    <TableHead className="hidden whitespace-nowrap sm:table-cell">
                       Duration
                     </TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead>Result</TableHead>
+                    <TableHead className="hidden sm:table-cell">Reason</TableHead>
+                    <TableHead className="hidden sm:table-cell">Result</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -161,13 +161,13 @@ export default async function AutomationPage() {
                       <TableCell>
                         <StatusBadge status={cmd.status} />
                       </TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+                      <TableCell className="hidden whitespace-nowrap font-mono text-xs text-muted-foreground sm:table-cell">
                         {formatDuration(cmd.started_at, cmd.finished_at)}
                       </TableCell>
-                      <TableCell className="max-w-[220px] truncate text-xs text-muted-foreground">
+                      <TableCell className="hidden max-w-[220px] truncate text-xs text-muted-foreground sm:table-cell">
                         {extractReason(cmd) ?? "—"}
                       </TableCell>
-                      <TableCell className="max-w-[260px] truncate text-xs">
+                      <TableCell className="hidden max-w-[260px] truncate text-xs sm:table-cell">
                         {cmd.error ? (
                           <span className="text-destructive">{cmd.error}</span>
                         ) : (

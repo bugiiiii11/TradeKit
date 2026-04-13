@@ -375,18 +375,17 @@ export default async function DashboardPage() {
                 {logs.map((log) => (
                   <li
                     key={log.id}
-                    className="flex items-start gap-3 px-3 py-1.5"
+                    className="px-3 py-1.5"
                   >
-                    <span className="w-20 shrink-0 text-muted-foreground">
-                      {formatTime(log.ts)}
-                    </span>
-                    <LogLevel level={log.level} />
-                    <span className="w-20 shrink-0 text-muted-foreground">
-                      [{log.source ?? "main"}]
-                    </span>
-                    <span className="min-w-0 flex-1 wrap-break-word text-foreground/90">
+                    {/* Mobile: stacked | Desktop: single row */}
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <span className="shrink-0">{formatTime(log.ts)}</span>
+                      <LogLevel level={log.level} />
+                      <span className="shrink-0">[{log.source ?? "main"}]</span>
+                    </div>
+                    <div className="mt-0.5 break-words text-foreground/90">
                       {log.message}
-                    </span>
+                    </div>
                   </li>
                 ))}
               </ul>
