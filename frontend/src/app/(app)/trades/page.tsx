@@ -43,6 +43,7 @@ type Trade = {
   slippage_bps: number | string | null;
   exit_reason: string | null;
   entry_conditions: Record<string, unknown> | null;
+  source: "bot" | "manual" | null;
   created_at: string;
 };
 
@@ -59,71 +60,78 @@ export default async function TradesPage() {
 
   const trades = (rows ?? []) as Trade[];
 
-  const stats = computeStats(trades);
+  const botTrades = trades.filter((t) => t.source !== "manual");
+  const manualTrades = trades.filter((t) => t.source === "manual");
+  const botStats = computeStats(botTrades);
+  const manualStats = computeStats(manualTrades);
+  const allStats = computeStats(trades);
 
   return (
     <>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Trades</h1>
         <p className="text-sm text-muted-foreground">
-          Closed trades logged by the bot. Each row is written by{" "}
-          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-            insertClosedTrade
-          </code>{" "}
-          on a successful position close.
+          Closed trades from the bot and manual test trades, tracked separately.
         </p>
       </div>
 
+      {/* ----- Combined stats ----- */}
       <AnimateIn className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard
           title="Total PnL"
-          value={formatUsd(stats.totalPnlUsd)}
+          value={formatUsd(allStats.totalPnlUsd)}
           icon={<Banknote className="h-4 w-4" />}
-          tone={pnlTone(stats.totalPnlUsd)}
-          hint={`${stats.count} closed`}
+          tone={pnlTone(allStats.totalPnlUsd)}
+          hint={`${allStats.count} closed`}
         />
         <StatCard
           title="Win Rate"
           value={
-            stats.count
-              ? `${Math.round((stats.wins / stats.count) * 100)}%`
+            allStats.count
+              ? `${Math.round((allStats.wins / allStats.count) * 100)}%`
               : "—"
           }
           icon={<Percent className="h-4 w-4" />}
-          hint={`${stats.wins}W / ${stats.losses}L`}
+          hint={`${allStats.wins}W / ${allStats.losses}L`}
         />
         <StatCard
           title="Avg R"
-          value={stats.count ? stats.avgR.toFixed(2) : "—"}
+          value={allStats.count ? allStats.avgR.toFixed(2) : "—"}
           icon={<Target className="h-4 w-4" />}
           hint="R = PnL / risk"
         />
         <StatCard
           title="Best Trade"
-          value={stats.best !== null ? formatUsd(stats.best) : "—"}
+          value={allStats.best !== null ? formatUsd(allStats.best) : "—"}
           icon={<TrendingUp className="h-4 w-4" />}
           hint={
-            stats.worst !== null ? `Worst ${formatUsd(stats.worst)}` : "—"
+            allStats.worst !== null ? `Worst ${formatUsd(allStats.worst)}` : "—"
           }
         />
       </AnimateIn>
 
-      <AnimateIn delay={100}>
+      {/* ----- Bot trades ----- */}
+      <AnimateIn delay={100} className="mb-6">
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
             <History className="h-4 w-4 text-muted-foreground" />
-            <CardTitle className="text-base">Trade History</CardTitle>
+            <CardTitle className="text-base">Bot Trades</CardTitle>
+            {botStats.count > 0 && (
+              <Badge variant="secondary" className="ml-auto font-mono text-xs">
+                PnL {formatUsd(botStats.totalPnlUsd)} &middot; {botStats.wins}W / {botStats.losses}L
+              </Badge>
+            )}
           </div>
           <CardDescription>
-            Most recent 100 closed trades, newest first.
+            Strategy-driven trades from the automated bot.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {trades.length === 0 ? (
+          {botTrades.length === 0 ? (
             <EmptyState
               icon={<Receipt className="h-5 w-5" />}
-              title="No trades yet"
+              title="No bot trades yet"
               description={
                 <>
                   The bot hasn&apos;t closed a trade yet. On the first LIVE
@@ -133,69 +141,38 @@ export default async function TradesPage() {
               }
             />
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Closed</TableHead>
-                    <TableHead>Symbol</TableHead>
-                    <TableHead>Side</TableHead>
-                    <TableHead className="text-right">Size</TableHead>
-                    <TableHead className="text-right">Entry</TableHead>
-                    <TableHead className="text-right">Exit</TableHead>
-                    <TableHead className="text-right">PnL</TableHead>
-                    <TableHead className="text-right">R</TableHead>
-                    <TableHead>Exit Reason</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {trades.map((t) => (
-                    <TableRow key={t.id}>
-                      <TableCell className="whitespace-nowrap font-mono text-xs">
-                        {t.exit_time
-                          ? formatTime(t.exit_time)
-                          : formatTime(t.created_at)}
-                      </TableCell>
-                      <TableCell className="font-medium">{t.symbol}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            t.side === "long" ? "default" : "destructive"
-                          }
-                          className="uppercase"
-                        >
-                          {t.side}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {formatNumber(t.size, 5)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {formatPrice(t.entry_price)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {formatPrice(t.exit_price)}
-                      </TableCell>
-                      <TableCell
-                        className={`text-right font-mono text-xs ${pnlClass(t.pnl_usd)}`}
-                      >
-                        {formatUsd(t.pnl_usd)}
-                      </TableCell>
-                      <TableCell
-                        className={`text-right font-mono text-xs ${pnlClass(t.pnl_r)}`}
-                      >
-                        {t.pnl_r !== null && t.pnl_r !== undefined
-                          ? Number(t.pnl_r).toFixed(2)
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">
-                        {t.exit_reason ?? "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <TradeTable trades={botTrades} showLeverage />
+          )}
+        </CardContent>
+      </Card>
+      </AnimateIn>
+
+      {/* ----- Manual trades ----- */}
+      <AnimateIn delay={200}>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Receipt className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-base">Manual Trades</CardTitle>
+            {manualStats.count > 0 && (
+              <Badge variant="secondary" className="ml-auto font-mono text-xs">
+                PnL {formatUsd(manualStats.totalPnlUsd)} &middot; {manualStats.wins}W / {manualStats.losses}L
+              </Badge>
+            )}
+          </div>
+          <CardDescription>
+            Test trades placed via the custom trade script.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {manualTrades.length === 0 ? (
+            <EmptyState
+              icon={<Receipt className="h-5 w-5" />}
+              title="No manual trades yet"
+              description="Run test_custom_trade.ts to place a manual trade. Results will appear here."
+            />
+          ) : (
+            <TradeTable trades={manualTrades} showLeverage />
           )}
         </CardContent>
       </Card>
@@ -303,6 +280,81 @@ function StatCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function TradeTable({ trades, showLeverage }: { trades: Trade[]; showLeverage?: boolean }) {
+  return (
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Closed</TableHead>
+            <TableHead>Symbol</TableHead>
+            <TableHead>Side</TableHead>
+            {showLeverage && <TableHead className="text-right">Lev</TableHead>}
+            <TableHead className="text-right">Size</TableHead>
+            <TableHead className="text-right">Entry</TableHead>
+            <TableHead className="text-right">Exit</TableHead>
+            <TableHead className="text-right">PnL</TableHead>
+            <TableHead className="text-right">R</TableHead>
+            <TableHead>Exit Reason</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {trades.map((t) => {
+            const leverage = t.entry_conditions?.leverage;
+            return (
+              <TableRow key={t.id}>
+                <TableCell className="whitespace-nowrap font-mono text-xs">
+                  {t.exit_time
+                    ? formatTime(t.exit_time)
+                    : formatTime(t.created_at)}
+                </TableCell>
+                <TableCell className="font-medium">{t.symbol}</TableCell>
+                <TableCell>
+                  <Badge
+                    variant={t.side === "long" ? "default" : "destructive"}
+                    className="uppercase"
+                  >
+                    {t.side}
+                  </Badge>
+                </TableCell>
+                {showLeverage && (
+                  <TableCell className="text-right font-mono text-xs">
+                    {leverage ? `${leverage}x` : "—"}
+                  </TableCell>
+                )}
+                <TableCell className="text-right font-mono text-xs">
+                  {formatNumber(t.size, 5)}
+                </TableCell>
+                <TableCell className="text-right font-mono text-xs">
+                  {formatPrice(t.entry_price)}
+                </TableCell>
+                <TableCell className="text-right font-mono text-xs">
+                  {formatPrice(t.exit_price)}
+                </TableCell>
+                <TableCell
+                  className={`text-right font-mono text-xs ${pnlClass(t.pnl_usd)}`}
+                >
+                  {formatUsd(t.pnl_usd)}
+                </TableCell>
+                <TableCell
+                  className={`text-right font-mono text-xs ${pnlClass(t.pnl_r)}`}
+                >
+                  {t.pnl_r !== null && t.pnl_r !== undefined
+                    ? Number(t.pnl_r).toFixed(2)
+                    : "—"}
+                </TableCell>
+                <TableCell className="max-w-50 truncate text-xs text-muted-foreground">
+                  {t.exit_reason ?? "—"}
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 

@@ -65,11 +65,11 @@ async function ensureLeverage(leverage: number): Promise<void> {
   const ctx = await getHyperliquidContext();
   await ctx.exchange.updateLeverage({
     asset: ctx.btcAssetIndex,
-    isCross: true,
+    isCross: false,
     leverage,
   });
   lastSetLeverage = leverage;
-  console.log(`[Orders] Leverage set to ${leverage}x cross on BTC`);
+  console.log(`[Orders] Leverage set to ${leverage}x isolated on BTC`);
 }
 
 /**
@@ -281,6 +281,117 @@ export async function cancelOpenBtcStops(): Promise<number> {
       stops.map((o: { oid: number }) => o.oid).join(", ")
   );
   return stops.length;
+}
+
+/**
+ * Places a trigger take-profit (TP) order after entry.
+ * Uses Hyperliquid's native trigger order type with `tpsl: "tp"`.
+ *
+ * For a long position the TP triggers when price rises above triggerPx.
+ * For a short position the TP triggers when price drops below triggerPx.
+ */
+export async function setTakeProfit(
+  direction: OrderDirection,
+  tpPrice: number,
+  sizeBase: number
+): Promise<string> {
+  const ctx = await getHyperliquidContext();
+  // To TP a long, we sell (b=false). To TP a short, we buy (b=true).
+  const closeIsLong = direction === "short";
+
+  const order = {
+    a: ctx.btcAssetIndex,
+    b: closeIsLong,
+    p: roundPrice(tpPrice, ctx.btcSzDecimals),
+    s: roundSize(sizeBase, ctx.btcSzDecimals),
+    r: true, // reduce-only
+    t: {
+      trigger: {
+        isMarket: true,
+        triggerPx: roundPrice(tpPrice, ctx.btcSzDecimals),
+        tpsl: "tp" as const,
+      },
+    },
+  };
+
+  const result = await ctx.exchange.order({ orders: [order], grouping: "na" });
+  const status = result.response.data.statuses[0];
+
+  if ("error" in status) {
+    throw new Error(`[Orders] Take-profit rejected: ${status.error}`);
+  }
+
+  const oid =
+    "resting" in status
+      ? String(status.resting.oid)
+      : "filled" in status
+      ? String(status.filled.oid)
+      : "unknown";
+
+  console.log(`[Orders] Take-profit set @ $${tpPrice} (${order.s} BTC) | oid: ${oid}`);
+  return oid;
+}
+
+/**
+ * Scaled take-profit target definition.
+ * @param pct      Distance from entry as a fraction (e.g. 0.01 = 1%)
+ * @param portion  Fraction of the total position to close (e.g. 0.5 = 50%)
+ */
+export interface TakeProfitTarget {
+  pct: number;
+  portion: number;
+}
+
+/**
+ * Places multiple take-profit trigger orders at scaled price levels.
+ *
+ * Each target closes a portion of the position at a different distance from
+ * entry. For example:
+ *   [{ pct: 0.01, portion: 0.5 }, { pct: 0.015, portion: 0.25 }, { pct: 0.02, portion: 0.25 }]
+ * closes 50% at +1%, 25% at +1.5%, 25% at +2%.
+ *
+ * @returns Array of { price, size, oid } for each target placed.
+ */
+export async function setScaledTakeProfits(
+  direction: OrderDirection,
+  entryPrice: number,
+  totalSizeBase: number,
+  targets: TakeProfitTarget[]
+): Promise<Array<{ price: number; size: number; oid: string }>> {
+  const ctx = await getHyperliquidContext();
+  const results: Array<{ price: number; size: number; oid: string }> = [];
+
+  for (let i = 0; i < targets.length; i++) {
+    const { pct, portion } = targets[i];
+    const tpPrice =
+      direction === "long"
+        ? entryPrice * (1 + pct)
+        : entryPrice * (1 - pct);
+
+    // For the last target, use remaining size to avoid rounding dust
+    let targetSize: number;
+    if (i === targets.length - 1) {
+      const alreadyAllocated = results.reduce((sum, r) => sum + r.size, 0);
+      targetSize = totalSizeBase - alreadyAllocated;
+    } else {
+      targetSize = totalSizeBase * portion;
+    }
+
+    // Floor to szDecimals — skip if rounds to zero
+    const sizeStr = roundSize(targetSize, ctx.btcSzDecimals);
+    if (parseFloat(sizeStr) === 0) {
+      console.warn(`[Orders] TP${i + 1} size rounds to 0 — skipping`);
+      continue;
+    }
+
+    const oid = await setTakeProfit(direction, tpPrice, parseFloat(sizeStr));
+    results.push({ price: tpPrice, size: parseFloat(sizeStr), oid });
+    console.log(
+      `[Orders] TP${i + 1}: ${(portion * 100).toFixed(0)}% (${sizeStr} BTC) @ $${tpPrice.toFixed(2)} | oid: ${oid}`
+    );
+  }
+
+  return results;
 }
 
 /**

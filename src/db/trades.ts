@@ -12,6 +12,8 @@
 import { getSupabase } from "./supabase";
 import { Direction, StrategyId } from "../strategy/types";
 
+export type TradeSource = "bot" | "manual";
+
 export interface ClosedTradeInput {
   strategy: StrategyId;
   direction: Direction;
@@ -28,6 +30,8 @@ export interface ClosedTradeInput {
   confluenceScore: number;
   stopDistancePct: number;
   exitReason: string;
+  /** "bot" for strategy-driven trades, "manual" for test_custom_trade.ts. Default: "bot". */
+  source?: TradeSource;
   /** Optional extras (fills info, slippage) that we do not track yet. */
   feesUsd?: number | null;
   slippageBps?: number | null;
@@ -54,6 +58,7 @@ export async function insertClosedTrade(input: ClosedTradeInput): Promise<void> 
     fees_usd: input.feesUsd ?? null,
     slippage_bps: input.slippageBps ?? null,
     exit_reason: input.exitReason,
+    source: input.source ?? "bot",
     entry_conditions: {
       strategy: input.strategy,
       leverage: input.leverage,
