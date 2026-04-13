@@ -1,0 +1,52 @@
+//@version=5
+strategy("S1 — EMA Trend Cross", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=20)
+
+// ── Inputs ──────────────────────────────────────────────────────────────────
+ema8_len   = input.int(8,   "EMA 8 Period")
+ema13_len  = input.int(13,  "EMA 13 Period")
+ema21_len  = input.int(21,  "EMA 21 Period")
+ema55_len  = input.int(55,  "EMA 55 Period")
+ema200_len = input.int(200, "EMA 200 Period")
+
+// ── Calculations ─────────────────────────────────────────────────────────────
+ema8   = ta.ema(close, ema8_len)
+ema13  = ta.ema(close, ema13_len)
+ema21  = ta.ema(close, ema21_len)
+ema55  = ta.ema(close, ema55_len)
+ema200 = ta.ema(close, ema200_len)
+
+// ── Conditions ───────────────────────────────────────────────────────────────
+longCross  = ta.crossover(ema8, ema55)
+shortCross = ta.crossunder(ema8, ema55)
+
+longCondition  = longCross  and ema13 > ema55 and ema21 > ema55 and close > ema200
+shortCondition = shortCross and ema13 < ema55 and ema21 < ema55 and close < ema200
+
+// Exit: reverse cross
+exitLong  = ta.crossunder(ema8, ema55)
+exitShort = ta.crossover(ema8, ema55)
+
+// ── Entries / Exits ───────────────────────────────────────────────────────────
+if longCondition
+    strategy.entry("Long", strategy.long)
+if shortCondition
+    strategy.entry("Short", strategy.short)
+
+if exitLong
+    strategy.close("Long", comment="Reverse cross")
+if exitShort
+    strategy.close("Short", comment="Reverse cross")
+
+// ── Stop Loss (below/above EMA55, ~3%) ───────────────────────────────────────
+strategy.exit("SL Long",  "Long",  stop=ema55 * 0.97)
+strategy.exit("SL Short", "Short", stop=ema55 * 1.03)
+
+// ── Plots ─────────────────────────────────────────────────────────────────────
+plot(ema8,   "EMA 8",   color=color.new(color.blue, 0),   linewidth=1)
+plot(ema13,  "EMA 13",  color=color.new(color.aqua, 0),   linewidth=1)
+plot(ema21,  "EMA 21",  color=color.new(color.green, 0),  linewidth=1)
+plot(ema55,  "EMA 55",  color=color.new(color.orange, 0), linewidth=2)
+plot(ema200, "EMA 200", color=color.new(color.red, 0),    linewidth=2)
+
+plotshape(longCondition,  title="Long Entry",  location=location.belowbar, color=color.green, style=shape.triangleup,   size=size.small)
+plotshape(shortCondition, title="Short Entry", location=location.abovebar, color=color.red,   style=shape.triangledown, size=size.small)

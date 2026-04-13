@@ -1,0 +1,64 @@
+//@version=5
+strategy("S3 — Stoch RSI Momentum Scalp", overlay=false, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ── Inputs ──────────────────────────────────────────────────────────────────
+rsi_len    = input.int(14, "RSI Period")
+stoch_len  = input.int(14, "Stoch Period")
+k_smooth   = input.int(3,  "K Smoothing")
+d_smooth   = input.int(3,  "D Smoothing")
+ema21_len  = input.int(21, "EMA 21 Period (1H filter — plot only)")
+
+// ── Stochastic RSI ────────────────────────────────────────────────────────────
+rsi      = ta.rsi(close, rsi_len)
+stoch    = ta.stoch(rsi, rsi, rsi, stoch_len)
+k        = ta.sma(stoch, k_smooth)
+d        = ta.sma(k, d_smooth)
+
+// ── EMA 21 (trend filter — use 1H chart for this strategy) ───────────────────
+ema21 = ta.ema(close, ema21_len)
+
+// ── RSI (14) for confirmation ─────────────────────────────────────────────────
+rsi14 = ta.rsi(close, 14)
+
+// ── Cross detection ───────────────────────────────────────────────────────────
+bullishCross = ta.crossover(k, d)
+bearishCross = ta.crossunder(k, d)
+
+// ── Entry Conditions ──────────────────────────────────────────────────────────
+nearOrAboveEMA21 = close >= ema21 * 0.995
+nearOrBelowEMA21 = close <= ema21 * 1.005
+
+longCondition  = bullishCross and k < 20 and d < 20 and nearOrAboveEMA21 and rsi14 >= 30 and rsi14 <= 50
+shortCondition = bearishCross and k > 80 and d > 80 and nearOrBelowEMA21 and rsi14 >= 50 and rsi14 <= 70
+
+// ── Exit: reverse cross ────────────────────────────────────────────────────────
+exitLong  = ta.crossunder(k, d)
+exitShort = ta.crossover(k, d)
+
+// ── Strategy ──────────────────────────────────────────────────────────────────
+if longCondition
+    strategy.entry("Long", strategy.long)
+if shortCondition
+    strategy.entry("Short", strategy.short)
+
+if exitLong
+    strategy.close("Long", comment="Reverse cross")
+if exitShort
+    strategy.close("Short", comment="Reverse cross")
+
+// Tight stop: 0.4%, profit target: 1%
+strategy.exit("TP/SL Long",  "Long",  profit=100, loss=40)
+strategy.exit("TP/SL Short", "Short", profit=100, loss=40)
+
+// ── Plots ──────────────────────────────────────────────────────────────────────
+plot(k, "K", color=color.blue,  linewidth=2)
+plot(d, "D", color=color.orange, linewidth=2)
+hline(80, "Overbought 80",  color=color.red,   linestyle=hline.style_dashed)
+hline(20, "Oversold 20",    color=color.green, linestyle=hline.style_dashed)
+hline(50, "Midline 50",     color=color.gray,  linestyle=hline.style_dotted)
+
+bgcolor(longCondition  ? color.new(color.green, 85) : na, title="Long Signal BG")
+bgcolor(shortCondition ? color.new(color.red,   85) : na, title="Short Signal BG")
+
+plotshape(longCondition,  title="S3 Long",  location=location.bottom, color=color.green, style=shape.triangleup,   size=size.small)
+plotshape(shortCondition, title="S3 Short", location=location.top,    color=color.red,   style=shape.triangledown, size=size.small)

@@ -1,0 +1,71 @@
+//@version=5
+strategy("S2 — RSI + EMA Mean Reversion", overlay=false, default_qty_type=strategy.percent_of_equity, default_qty_value=15)
+
+// ── Inputs ──────────────────────────────────────────────────────────────────
+ema21_len    = input.int(21,  "EMA 21 Period")
+ema55_len    = input.int(55,  "EMA 55 Period")
+rsi_len      = input.int(14,  "RSI Period")
+bbwp_len     = input.int(13,  "BBWP Period")
+bbwp_lb      = input.int(252, "BBWP Lookback")
+pmarp_len    = input.int(20,  "PMARP Period")
+pmarp_lb     = input.int(350, "PMARP Lookback")
+retest_pct   = input.float(0.5, "EMA55 Retest Threshold %", step=0.1) / 100
+
+// ── EMAs ─────────────────────────────────────────────────────────────────────
+ema21 = ta.ema(close, ema21_len)
+ema55 = ta.ema(close, ema55_len)
+
+// ── RSI ───────────────────────────────────────────────────────────────────────
+rsi = ta.rsi(close, rsi_len)
+
+// ── BBWP (Bollinger Band Width Percentile) ────────────────────────────────────
+bb_upper = ta.sma(close, bbwp_len) + 2 * ta.stdev(close, bbwp_len)
+bb_lower = ta.sma(close, bbwp_len) - 2 * ta.stdev(close, bbwp_len)
+bbw      = (bb_upper - bb_lower) / ta.sma(close, bbwp_len)
+bbwp     = ta.percentrank(bbw, bbwp_lb)
+
+// ── PMARP (Price-MA Ratio Percentile) ────────────────────────────────────────
+ma_ratio = close / ta.sma(close, pmarp_len)
+pmarp    = ta.percentrank(ma_ratio, pmarp_lb)
+
+// ── EMA55 Retest Detection ────────────────────────────────────────────────────
+retestFromAbove = (close - ema55) / ema55 >= 0 and (close - ema55) / ema55 <= retest_pct
+retestFromBelow = (ema55 - close) / ema55 >= 0 and (ema55 - close) / ema55 <= retest_pct
+
+// ── Entry Conditions ──────────────────────────────────────────────────────────
+longCondition  = ema21 > ema55 and bbwp < 35 and pmarp < 50 and retestFromAbove and rsi >= 35 and rsi <= 55
+shortCondition = ema21 < ema55 and bbwp < 35 and pmarp > 50 and retestFromBelow and rsi >= 45 and rsi <= 65
+
+// ── Exit Conditions ───────────────────────────────────────────────────────────
+pmarpPrevAbove85 = pmarp[1] >= 85
+pmarpExitLong    = pmarpPrevAbove85 and pmarp < 85
+bbwpExit         = bbwp >= 85
+trendReverseLong  = ta.crossunder(ema21, ema55)
+trendReverseShort = ta.crossover(ema21, ema55)
+
+exitLong  = pmarpExitLong or bbwpExit or trendReverseLong
+exitShort = pmarpExitLong or bbwpExit or trendReverseShort
+
+// ── Strategy ──────────────────────────────────────────────────────────────────
+if longCondition
+    strategy.entry("Long", strategy.long)
+if shortCondition
+    strategy.entry("Short", strategy.short)
+
+if exitLong
+    strategy.close("Long")
+if exitShort
+    strategy.close("Short")
+
+strategy.exit("SL Long",  "Long",  loss=150)  // ~1.5% on BTC at $100k
+strategy.exit("SL Short", "Short", loss=150)
+
+// ── Plots ──────────────────────────────────────────────────────────────────────
+plot(bbwp,  "BBWP",  color=color.blue)
+plot(pmarp, "PMARP", color=color.orange)
+hline(35,  "BBWP 35",  color=color.gray,   linestyle=hline.style_dashed)
+hline(85,  "BBWP/PMARP 85", color=color.red, linestyle=hline.style_dashed)
+hline(50,  "PMARP 50", color=color.gray,   linestyle=hline.style_dashed)
+
+plotshape(longCondition,  title="S2 Long",  location=location.bottom, color=color.green, style=shape.triangleup,   size=size.small)
+plotshape(shortCondition, title="S2 Short", location=location.top,    color=color.red,   style=shape.triangledown, size=size.small)

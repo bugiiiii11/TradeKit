@@ -1,0 +1,39 @@
+node_modules/
+dist/
+
+# NEVER commit real env files — they contain private keys and service role credentials
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Keep the example template
+!.env.example
+
+# Frontend build artifacts (Next.js)
+.next/
+out/
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+
+# Local data
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+emergency-snapshot.md
+
+# Debug / logs
+debug.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/*.log
+
+# Safety audit log (local only)
+.claude/safety-audit.jsonl
