@@ -6,7 +6,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 
 export function SiteHeader({ email }: { email?: string | null }) {
   return (
-    <header className="header-glow sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-xl">
+    <header className="header-glow fixed top-0 left-0 right-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-xl">
       <div className="mx-auto flex h-14 w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
         <Link href="/" className="group flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-linear-to-br from-primary to-primary/70 text-primary-foreground shadow-sm transition-all duration-200 group-hover:shadow-lg group-hover:shadow-primary/25 group-hover:scale-105">
@@ -14,7 +14,7 @@ export function SiteHeader({ email }: { email?: string | null }) {
           </div>
           <div className="flex flex-col leading-tight">
             <span className="text-sm font-semibold tracking-tight transition-colors group-hover:text-primary">
-              TradingBot
+              TradeKit
             </span>
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
               BTC / Hyperliquid
