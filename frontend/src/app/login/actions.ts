@@ -1,41 +1,37 @@
 "use server";
 
-import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 
 export type LoginState =
   | { status: "idle" }
-  | { status: "sent"; email: string }
+  | { status: "success" }
   | { status: "error"; message: string };
 
-export async function sendMagicLink(
+export async function signIn(
   _prev: LoginState | undefined,
   formData: FormData,
 ): Promise<LoginState> {
   const email = String(formData.get("email") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
 
   if (!email || !email.includes("@")) {
     return { status: "error", message: "Enter a valid email address." };
   }
 
-  const supabase = await createClient();
-  const headerList = await headers();
-  const host = headerList.get("host") ?? "localhost:3000";
-  const protocol =
-    headerList.get("x-forwarded-proto") ??
-    (host.startsWith("localhost") ? "http" : "https");
-  const origin = `${protocol}://${host}`;
+  if (!password) {
+    return { status: "error", message: "Enter your password." };
+  }
 
-  const { error } = await supabase.auth.signInWithOtp({
+  const supabase = await createClient();
+
+  const { error } = await supabase.auth.signInWithPassword({
     email,
-    options: {
-      emailRedirectTo: `${origin}/auth/callback`,
-    },
+    password,
   });
 
   if (error) {
     return { status: "error", message: error.message };
   }
 
-  return { status: "sent", email };
+  return { status: "success" };
 }

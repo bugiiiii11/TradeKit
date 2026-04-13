@@ -18,7 +18,7 @@ export default function LoginPage() {
           </div>
           <CardTitle>TradingBot Control</CardTitle>
           <CardDescription>
-            Sign in with a magic link to access the dashboard.
+            Sign in to access the dashboard.
           </CardDescription>
         </CardHeader>
         <CardContent>
