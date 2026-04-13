@@ -255,7 +255,6 @@ export default async function MarketDataPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>#</TableHead>
                   <TableHead>Asset</TableHead>
                   <TableHead className="text-right">Price</TableHead>
                   <TableHead className="text-right">1h</TableHead>
@@ -265,11 +264,8 @@ export default async function MarketDataPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {coins.map((coin, i) => (
+                {coins.map((coin) => (
                   <TableRow key={coin.id}>
-                    <TableCell className="text-muted-foreground">
-                      {i + 1}
-                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -281,9 +277,6 @@ export default async function MarketDataPage() {
                           className="rounded-full"
                         />
                         <span className="font-medium">{coin.name}</span>
-                        <span className="text-xs uppercase text-muted-foreground">
-                          {coin.symbol}
-                        </span>
                       </div>
                     </TableCell>
                     <TableCell className="text-right font-mono font-medium">
