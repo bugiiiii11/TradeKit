@@ -28,6 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AnimateIn } from "@/components/animate-in";
 import { formatPrice, formatRelativeTime, formatFundingRate } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
@@ -186,7 +187,7 @@ export default async function MarketDataPage() {
       </div>
 
       {/* ── Market Metrics Row ── */}
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <AnimateIn className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <MetricCard
           title="Total Market Cap"
           value={totalMcap ? `$${(totalMcap / 1e12).toFixed(2)}T` : "—"}
@@ -234,9 +235,10 @@ export default async function MarketDataPage() {
           }
           icon={<Activity className="h-4 w-4" />}
         />
-      </div>
+      </AnimateIn>
 
       {/* ── Price Table ── */}
+      <AnimateIn delay={100}>
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="text-base">Crypto Prices</CardTitle>
@@ -306,8 +308,10 @@ export default async function MarketDataPage() {
           )}
         </CardContent>
       </Card>
+      </AnimateIn>
 
       {/* ── BTC Technical Dashboard ── */}
+      <AnimateIn delay={200}>
       <div className="mb-4 flex items-center gap-2">
         <h2 className="text-lg font-semibold">BTC Technical Dashboard</h2>
         {snapshot?.macro_filter && (
@@ -519,6 +523,7 @@ export default async function MarketDataPage() {
           </Card>
         </div>
       )}
+      </AnimateIn>
 
       <p className="mt-6 text-center text-xs text-muted-foreground">
         Crypto prices from CoinGecko (cached 60s). Technical indicators from the bot&apos;s
@@ -548,16 +553,16 @@ function MetricCard({
   badge?: { label: string; variant: "default" | "destructive" | "secondary" };
 }) {
   return (
-    <Card>
+    <Card className="stat-card">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           {title}
         </CardTitle>
-        <div className="text-muted-foreground">{icon}</div>
+        <div className="rounded-md bg-muted/60 p-1.5 text-muted-foreground">{icon}</div>
       </CardHeader>
       <CardContent>
         <div className="flex items-baseline gap-2">
-          <div className="text-xl font-semibold tabular-nums">{value}</div>
+          <div className="text-xl font-bold tabular-nums tracking-tight">{value}</div>
           {badge && (
             <Badge variant={badge.variant} className="text-[10px]">
               {badge.label}

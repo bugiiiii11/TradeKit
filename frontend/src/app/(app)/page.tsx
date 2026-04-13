@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { KillSwitchButton } from "@/components/kill-switch-button";
+import { AnimateIn } from "@/components/animate-in";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -142,7 +143,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Top stats row */}
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <AnimateIn className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Bankroll"
           value={formatUsd(latestRisk?.bankroll_usd)}
@@ -208,7 +209,7 @@ export default async function DashboardPage() {
             </div>
           }
         />
-      </div>
+      </AnimateIn>
 
       {/* Kill switch banner — highest priority, sits above the pause banner */}
       {latestRisk?.killed && (
@@ -246,7 +247,7 @@ export default async function DashboardPage() {
       )}
 
       {/* Main grid */}
-      <div className="grid gap-6 lg:grid-cols-3">
+      <AnimateIn delay={100} className="grid gap-6 lg:grid-cols-3">
         {/* Recent ticks table */}
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -351,9 +352,10 @@ export default async function DashboardPage() {
             )}
           </CardContent>
         </Card>
-      </div>
+      </AnimateIn>
 
       {/* Log viewer */}
+      <AnimateIn delay={200}>
       <Card className="mt-6">
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -393,6 +395,7 @@ export default async function DashboardPage() {
           )}
         </CardContent>
       </Card>
+      </AnimateIn>
 
       {/* Footer hint */}
       <p className="mt-6 text-center text-xs text-muted-foreground">
@@ -422,16 +425,20 @@ function StatCard({
   subline?: React.ReactNode;
 }) {
   return (
-    <Card>
+    <Card className="stat-card">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           {title}
         </CardTitle>
-        <div className="text-muted-foreground">{icon}</div>
+        <div className="rounded-md bg-muted/60 p-1.5 text-muted-foreground">
+          {icon}
+        </div>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-semibold tabular-nums">{value}</div>
-        {subline && <div className="mt-1">{subline}</div>}
+        <div className="text-2xl font-bold tabular-nums tracking-tight">
+          {value}
+        </div>
+        {subline && <div className="mt-1.5">{subline}</div>}
       </CardContent>
     </Card>
   );

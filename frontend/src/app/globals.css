@@ -137,3 +137,68 @@
     @apply font-sans;
   }
 }
+
+/* ── Stat card glow effect ── */
+.stat-card {
+  position: relative;
+  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
+}
+.stat-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 300ms ease-out;
+  pointer-events: none;
+}
+.dark .stat-card::before {
+  background: linear-gradient(
+    135deg,
+    oklch(0.72 0.14 195 / 6%) 0%,
+    transparent 60%
+  );
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+}
+.dark .stat-card:hover {
+  box-shadow: 0 4px 24px oklch(0.72 0.14 195 / 8%),
+    0 0 0 1px oklch(0.72 0.14 195 / 12%);
+}
+:root .stat-card:hover {
+  box-shadow: 0 4px 24px oklch(0.45 0.12 200 / 10%),
+    0 0 0 1px oklch(0.45 0.12 200 / 15%);
+}
+.stat-card:hover::before {
+  opacity: 1;
+}
+
+/* ── Header gradient line ── */
+.header-glow {
+  position: relative;
+}
+.header-glow::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    oklch(0.72 0.14 195 / 40%) 50%,
+    transparent 100%
+  );
+}
+
+/* ── Reduced motion support ── */
+@media (prefers-reduced-motion: reduce) {
+  .stat-card {
+    transition: none;
+  }
+  .stat-card:hover {
+    transform: none;
+  }
+}
