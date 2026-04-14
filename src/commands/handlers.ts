@@ -11,7 +11,8 @@
  */
 
 import { getOpenPositions } from "../hyperliquid/account";
-import { closePosition } from "../hyperliquid/orders";
+import { closePosition, placeMarketOrder, setStopLoss, setTakeProfit, type OrderDirection } from "../hyperliquid/orders";
+import { getHyperliquidContext } from "../hyperliquid/client";
 import { clearKilled, getState, setKilled } from "../risk/state";
 import { writeRiskSnapshot } from "../db/snapshots";
 
@@ -146,6 +147,201 @@ export async function handleKillSwitch(
     // and the dashboard needs to reflect the killed state even if the
     // close-all step failed. Operator can inspect and retry manually.
     setKilled(`${reason} (handler error: ${msg})`);
+    return { ok: false, error: msg };
+  }
+}
+
+/**
+ * Manual trade handler.
+ *
+ * Payload shape (ManualTradePayload):
+ *   direction    — "long" | "short"
+ *   leverage     — 1–40
+ *   notionalUsd  — position size in USD (≥ $10)
+ *   slPrice      — absolute stop-loss price
+ *   tpTargets    — 1–3 take-profit levels: { price, portion }
+ *                  portion is a fraction of total size (must sum to ≈ 1.0)
+ *
+ * Steps:
+ *   1. Validate payload and bot state (killed check, existing position check).
+ *   2. Fetch mark price → calculate BTC size from notional.
+ *   3. Place market order (IOC via placeMarketOrder).
+ *   4. Wait 3 s for fill confirmation, then verify position exists.
+ *   5. Set stop-loss at slPrice.
+ *   6. Set each TP level via setTakeProfit (last level gets remaining size
+ *      to avoid rounding dust).
+ *   7. Return full result including entryPrice, oids, and tpCount.
+ */
+export interface ManualTradePayload {
+  direction: "long" | "short";
+  leverage: number;
+  notionalUsd: number;
+  slPrice: number;
+  tpTargets: Array<{ price: number; portion: number }>;
+}
+
+export async function handleManualTrade(
+  payload: unknown,
+  _ctx: CommandHandlerContext
+): Promise<CommandResult> {
+  if (typeof payload !== "object" || !payload) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const p = payload as ManualTradePayload;
+  const { direction, leverage, notionalUsd, slPrice, tpTargets } = p;
+
+  if (direction !== "long" && direction !== "short") {
+    return { ok: false, error: `Invalid direction: ${String(direction)}` };
+  }
+  if (!leverage || leverage < 1 || leverage > 40) {
+    return { ok: false, error: `Leverage must be 1–40, got: ${leverage}` };
+  }
+  if (!notionalUsd || notionalUsd < 10) {
+    return { ok: false, error: `Notional must be ≥ $10, got: $${notionalUsd}` };
+  }
+  if (!slPrice || slPrice <= 0) {
+    return { ok: false, error: `Invalid SL price: ${slPrice}` };
+  }
+  if (!Array.isArray(tpTargets) || tpTargets.length === 0) {
+    return { ok: false, error: "At least one TP target is required" };
+  }
+  if (tpTargets.length > 3) {
+    return { ok: false, error: "Maximum 3 TP targets allowed" };
+  }
+
+  if (getState().killed) {
+    return { ok: false, error: "Bot is in killed state — resume before placing trades" };
+  }
+
+  console.log(
+    `[Commands] Manual trade: ${direction} ${leverage}x $${notionalUsd} | ` +
+      `SL: $${slPrice} | TPs: ${tpTargets.length}`
+  );
+
+  if (DRY_RUN) {
+    console.warn("[Commands] DRY_RUN — skipping Hyperliquid order calls");
+    return {
+      ok: true,
+      result: {
+        dryRun: true,
+        direction,
+        leverage,
+        notionalUsd,
+        slPrice,
+        tpCount: tpTargets.length,
+      },
+    };
+  }
+
+  try {
+    // Block if there is already an open BTC position
+    const open = await getOpenPositions();
+    const existing = open.find((pos) => pos.coin === "BTC" && pos.sizeBase > 0);
+    if (existing) {
+      return {
+        ok: false,
+        error: `Already have an open BTC ${existing.direction} position (${existing.sizeBase} BTC). Close it first.`,
+      };
+    }
+
+    // Get mark price and calculate BTC size
+    const ctx = await getHyperliquidContext();
+    const [, ctxs] = await ctx.info.metaAndAssetCtxs();
+    const markPx = parseFloat(ctxs[ctx.btcAssetIndex].markPx);
+    const factor = Math.pow(10, ctx.btcSzDecimals);
+    const sizeBase = Math.floor((notionalUsd / markPx) * factor) / factor;
+
+    if (sizeBase === 0) {
+      return {
+        ok: false,
+        error: `Notional $${notionalUsd} too small for BTC @ $${markPx.toFixed(0)}`,
+      };
+    }
+
+    // Server-side direction validation (belt-and-suspenders over client validation)
+    if (direction === "long" && slPrice >= markPx) {
+      return { ok: false, error: `Long SL ($${slPrice}) must be below mark ($${markPx.toFixed(0)})` };
+    }
+    if (direction === "short" && slPrice <= markPx) {
+      return { ok: false, error: `Short SL ($${slPrice}) must be above mark ($${markPx.toFixed(0)})` };
+    }
+    for (let i = 0; i < tpTargets.length; i++) {
+      const tpPrice = tpTargets[i].price;
+      if (direction === "long" && tpPrice <= markPx) {
+        return { ok: false, error: `TP${i + 1} ($${tpPrice}) must be above mark ($${markPx.toFixed(0)}) for a long` };
+      }
+      if (direction === "short" && tpPrice >= markPx) {
+        return { ok: false, error: `TP${i + 1} ($${tpPrice}) must be below mark ($${markPx.toFixed(0)}) for a short` };
+      }
+    }
+
+    // Place market entry
+    const entryOid = await placeMarketOrder(direction as OrderDirection, sizeBase, leverage);
+
+    // Wait for fill confirmation
+    await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+
+    // Verify position exists
+    const positions = await getOpenPositions();
+    const btcPos = positions.find((pos) => pos.coin === "BTC");
+    if (!btcPos) {
+      return {
+        ok: false,
+        error: "No BTC position found after entry — check Hyperliquid UI and close manually if needed",
+      };
+    }
+    const entryPrice = btcPos.entryPrice;
+
+    // Set stop-loss
+    const slOid = await setStopLoss(direction as OrderDirection, slPrice, sizeBase);
+
+    // Set take-profit levels
+    const tpOids: string[] = [];
+    let allocatedSize = 0;
+
+    for (let i = 0; i < tpTargets.length; i++) {
+      const { price: tpPrice, portion } = tpTargets[i];
+      let tpSize: number;
+
+      if (i === tpTargets.length - 1) {
+        // Last TP gets remaining size to avoid rounding dust
+        tpSize = Math.floor((sizeBase - allocatedSize) * factor) / factor;
+      } else {
+        tpSize = Math.floor(sizeBase * portion * factor) / factor;
+      }
+
+      if (tpSize <= 0) {
+        console.warn(`[Commands] TP${i + 1} size rounds to 0 — skipping`);
+        continue;
+      }
+
+      const tpOid = await setTakeProfit(direction as OrderDirection, tpPrice, tpSize);
+      tpOids.push(tpOid);
+      allocatedSize += tpSize;
+      console.log(
+        `[Commands] TP${i + 1}: ${(portion * 100).toFixed(0)}% (${tpSize} BTC) @ $${tpPrice} | oid: ${tpOid}`
+      );
+    }
+
+    return {
+      ok: true,
+      result: {
+        direction,
+        leverage,
+        entryPrice,
+        sizeBase,
+        actualNotionalUsd: sizeBase * markPx,
+        slPrice,
+        entryOid,
+        slOid,
+        tpOids,
+        tpCount: tpOids.length,
+        placedAt: new Date().toISOString(),
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Commands] Manual trade error: ${msg}`);
     return { ok: false, error: msg };
   }
 }

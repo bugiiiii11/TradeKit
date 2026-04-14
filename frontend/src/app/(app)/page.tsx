@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { KillSwitchButton } from "@/components/kill-switch-button";
+import { ManualTradeCard } from "@/components/manual-trade-card";
 import { AnimateIn } from "@/components/animate-in";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -352,6 +353,11 @@ export default async function DashboardPage() {
             )}
           </CardContent>
         </Card>
+      </AnimateIn>
+
+      {/* Manual trade card */}
+      <AnimateIn delay={150} className="mt-6">
+        <ManualTradeCard markPrice={Number(latestMarket?.price) || 0} />
       </AnimateIn>
 
       {/* Log viewer */}

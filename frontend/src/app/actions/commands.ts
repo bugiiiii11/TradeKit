@@ -12,10 +12,10 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-export type CommandType = "kill_switch" | "resume";
+export type CommandType = "kill_switch" | "resume" | "manual_trade";
 
 export type CommandActionResult =
-  | { ok: true; id: string }
+  | { ok: true; id: string; result?: Record<string, unknown> }
   | { ok: false; error: string };
 
 /**
@@ -76,18 +76,20 @@ export async function issueCommand(
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   let finalStatus: "done" | "failed" | null = null;
   let finalError: string | null = null;
+  let finalResult: Record<string, unknown> | undefined = undefined;
 
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 
     const { data: row } = await supabase
       .from("bot_commands")
-      .select("status, error")
+      .select("status, error, result")
       .eq("id", commandId)
       .single();
 
     if (row?.status === "done") {
       finalStatus = "done";
+      finalResult = (row.result as Record<string, unknown> | null) ?? undefined;
       break;
     }
     if (row?.status === "failed") {
@@ -102,7 +104,7 @@ export async function issueCommand(
   revalidatePath("/");
 
   if (finalStatus === "done") {
-    return { ok: true, id: commandId };
+    return { ok: true, id: commandId, result: finalResult };
   }
   if (finalStatus === "failed") {
     return { ok: false, error: finalError ?? "Command failed" };
@@ -121,4 +123,19 @@ export async function killSwitch(reason?: string): Promise<CommandActionResult> 
 /** Convenience wrapper for the resume button. */
 export async function resumeBot(): Promise<CommandActionResult> {
   return issueCommand("resume", {});
+}
+
+export interface ManualTradeParams {
+  direction: "long" | "short";
+  leverage: number;
+  notionalUsd: number;
+  slPrice: number;
+  tpTargets: Array<{ price: number; portion: number }>;
+}
+
+/** Place a manual BTC trade via the command bus. */
+export async function issueManualTrade(
+  params: ManualTradeParams,
+): Promise<CommandActionResult> {
+  return issueCommand("manual_trade", params as unknown as Record<string, unknown>);
 }

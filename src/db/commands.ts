@@ -22,7 +22,7 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getSupabase } from "./supabase";
 import type { CommandHandlerContext, CommandResult } from "../commands/handlers";
-import { handleKillSwitch, handleResume } from "../commands/handlers";
+import { handleKillSwitch, handleManualTrade, handleResume } from "../commands/handlers";
 
 /** Command row shape as stored in public.bot_commands */
 interface CommandRow {
@@ -40,6 +40,7 @@ type Handler = (
 const HANDLERS: Record<string, Handler> = {
   kill_switch: handleKillSwitch,
   resume: handleResume,
+  manual_trade: handleManualTrade,
 };
 
 let _channel: RealtimeChannel | null = null;
