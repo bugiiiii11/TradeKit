@@ -21,7 +21,7 @@ dotenv.config();
 import { collectAllTimeframes } from "../backtest/collector";
 import { alignBars }            from "../backtest/aligner";
 import { runBacktest }           from "../backtest/engine";
-import { printResults, saveResultsToFile } from "../backtest/reporter";
+import { printResults, saveResultsToFile, saveToSupabase } from "../backtest/reporter";
 import type { BacktestConfig }   from "../backtest/types";
 
 // ---------------------------------------------------------------------------
@@ -83,7 +83,11 @@ async function main(): Promise<void> {
   // Step 4: output
   printResults(result);
   const outPath = saveResultsToFile(result);
-  console.log(`[Backtest] Results saved to: ${outPath}\n`);
+  console.log(`[Backtest] Results saved to: ${outPath}`);
+
+  // Step 5: persist to Supabase (for Vercel production)
+  await saveToSupabase(result);
+  console.log("");
 }
 
 main().catch(err => {

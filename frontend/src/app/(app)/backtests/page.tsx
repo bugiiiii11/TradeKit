@@ -1,75 +1,71 @@
-import fs from "fs";
-import path from "path";
 import { BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
 import { BacktestTabs, type BacktestRun } from "@/components/backtest-tabs";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 // ---------------------------------------------------------------------------
-// Load all runs from backtest-results/ directory (+ legacy backtest-results.json)
+// Load runs from Supabase backtest_runs table
 // ---------------------------------------------------------------------------
 
-function loadRuns(): BacktestRun[] {
-  const projectRoot = path.resolve(process.cwd(), "..");
-  const runsDir = path.join(projectRoot, "backtest-results");
-  const legacyFile = path.join(projectRoot, "backtest-results.json");
+async function loadRuns(): Promise<BacktestRun[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("backtest_runs")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(20);
 
-  const runs: BacktestRun[] = [];
-  const seen = new Set<string>(); // deduplicate by generatedAt
+  if (error || !data) return [];
 
-  // Read from backtest-results/ directory
-  if (fs.existsSync(runsDir)) {
-    const files = fs.readdirSync(runsDir)
-      .filter(f => f.endsWith(".json"))
-      .sort()                       // lexicographic = chronological (YYYYMMDD-HHmmss)
-      .reverse();                   // newest first
+  return data.map((row: Record<string, unknown>) => {
+    const days = Number(row.days) || 0;
+    const createdAt = row.created_at as string;
+    const at = new Date(createdAt);
+    const datePart = at.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-    for (const filename of files) {
-      try {
-        const raw = fs.readFileSync(path.join(runsDir, filename), "utf-8");
-        const data = JSON.parse(raw);
-        const key = data.generatedAt ?? filename;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        runs.push({ ...data, label: makeLabel(data, filename), filename });
-      } catch { /* skip malformed files */ }
-    }
-  }
-
-  // Fall back to legacy file only if directory produced nothing
-  if (runs.length === 0 && fs.existsSync(legacyFile)) {
-    try {
-      const raw = fs.readFileSync(legacyFile, "utf-8");
-      const data = JSON.parse(raw);
-      runs.push({ ...data, label: makeLabel(data, "backtest-results.json"), filename: "backtest-results.json" });
-    } catch { /* skip */ }
-  }
-
-  return runs;
-}
-
-function makeLabel(data: { config?: { days?: number }; generatedAt?: string }, filename: string): string {
-  const days = data.config?.days ?? parseDaysFromFilename(filename);
-  const at   = data.generatedAt ? new Date(data.generatedAt) : null;
-  const datePart = at
-    ? at.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-    : filename.replace(".json", "");
-  return `${days}d · ${datePart}`;
-}
-
-function parseDaysFromFilename(filename: string): number {
-  const m = filename.match(/^(\d+)d/);
-  return m ? parseInt(m[1], 10) : 0;
+    // Map DB row → BacktestRun shape expected by BacktestTabs
+    return {
+      label: `${days}d · ${datePart}`,
+      filename: `${row.id}`,
+      config: {
+        days,
+        bankroll: Number(row.bankroll) || 500,
+        marginPct: Number(row.margin_pct) || 0.05,
+      },
+      generatedAt: createdAt,
+      stats: {
+        totalTrades:    Number(row.total_trades) || 0,
+        winners:        Number(row.winners) || 0,
+        losers:         Number(row.losers) || 0,
+        winRate:        Number(row.win_rate) || 0,
+        totalPnlUsd:    Number(row.total_pnl_usd) || 0,
+        maxDrawdownUsd: Number(row.max_dd_usd) || 0,
+        maxDrawdownPct: Number(row.max_dd_pct) || 0,
+        profitFactor:   Number(row.profit_factor) || 0,
+        avgWinUsd:      Number(row.avg_win_usd) || 0,
+        avgLossUsd:     Number(row.avg_loss_usd) || 0,
+        avgRMultiple:   Number(row.avg_r_multiple) || 0,
+        sharpeRatio:    row.sharpe_ratio != null ? Number(row.sharpe_ratio) : 0,
+        byStrategy: {
+          S1: { trades: Number(row.s1_trades) || 0, winRate: Number(row.s1_win_rate) || 0, pnlUsd: Number(row.s1_pnl_usd) || 0 },
+          S2: { trades: Number(row.s2_trades) || 0, winRate: Number(row.s2_win_rate) || 0, pnlUsd: Number(row.s2_pnl_usd) || 0 },
+          S3: { trades: Number(row.s3_trades) || 0, winRate: Number(row.s3_win_rate) || 0, pnlUsd: Number(row.s3_pnl_usd) || 0 },
+        },
+      },
+      trades: Array.isArray(row.trades) ? row.trades : [],
+    } satisfies BacktestRun;
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
-export default function BacktestsPage() {
-  const runs = loadRuns();
+export default async function BacktestsPage() {
+  const runs = await loadRuns();
 
   return (
     <>
@@ -92,11 +88,7 @@ export default function BacktestsPage() {
                   <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
                     npx ts-node src/scripts/backtest.ts
                   </code>{" "}
-                  to generate results. Files are saved to{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                    backtest-results/
-                  </code>{" "}
-                  and appear here automatically.
+                  to generate results. They are saved to Supabase and appear here automatically.
                 </>
               }
             />

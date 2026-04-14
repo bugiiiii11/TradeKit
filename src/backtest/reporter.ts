@@ -3,14 +3,14 @@
  *
  * Outputs:
  *   1. Rich console table (always)
- *   2. JSON file at project root: backtest-results.json (always)
- *
- * The JSON file can be loaded by a future frontend Backtests page.
+ *   2. JSON file in backtest-results/ directory (always)
+ *   3. Supabase backtest_runs row (if SUPABASE_URL is configured)
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import type { BacktestResult, BacktestTrade } from "./types";
+import { getSupabase } from "../db/supabase";
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -160,4 +160,66 @@ export function saveResultsToFile(result: BacktestResult): string {
   fs.writeFileSync(legacyPath, json);
 
   return runPath;
+}
+
+// ---------------------------------------------------------------------------
+// Supabase save
+// ---------------------------------------------------------------------------
+
+export async function saveToSupabase(result: BacktestResult): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) {
+    console.log("[Backtest] Supabase not configured — skipping DB save");
+    return;
+  }
+
+  const { config, trades, stats, equityCurve } = result;
+  const s1 = stats.byStrategy.S1;
+  const s2 = stats.byStrategy.S2;
+  const s3 = stats.byStrategy.S3;
+
+  const tradesJson = trades.map((t: BacktestTrade) => ({
+    ...t,
+    entryDate: new Date(t.entryTimestamp).toISOString(),
+    exitDate:  new Date(t.exitTimestamp).toISOString(),
+    duration:  fmtDuration(t.entryTimestamp, t.exitTimestamp),
+  }));
+
+  const row = {
+    days:           config.days,
+    bankroll:       config.bankroll,
+    margin_pct:     config.marginPct,
+    total_trades:   stats.totalTrades,
+    winners:        stats.winners,
+    losers:         stats.losers,
+    win_rate:       stats.winRate,
+    total_pnl_usd:  stats.totalPnlUsd,
+    gross_win:      stats.grossWin,
+    gross_loss:     stats.grossLoss,
+    profit_factor:  stats.profitFactor === Infinity ? 9999 : stats.profitFactor,
+    max_dd_usd:     stats.maxDrawdownUsd,
+    max_dd_pct:     stats.maxDrawdownPct,
+    avg_win_usd:    stats.avgWinUsd,
+    avg_loss_usd:   stats.avgLossUsd,
+    avg_r_multiple: stats.avgRMultiple,
+    sharpe_ratio:   stats.sharpeRatio,
+    s1_trades:      s1.trades,
+    s1_win_rate:    s1.winRate,
+    s1_pnl_usd:    s1.pnlUsd,
+    s2_trades:      s2.trades,
+    s2_win_rate:    s2.winRate,
+    s2_pnl_usd:    s2.pnlUsd,
+    s3_trades:      s3.trades,
+    s3_win_rate:    s3.winRate,
+    s3_pnl_usd:    s3.pnlUsd,
+    trades:         tradesJson,
+    equity_curve:   equityCurve,
+  };
+
+  const { error } = await sb.from("backtest_runs").insert(row);
+  if (error) {
+    console.error("[Backtest] Supabase save failed:", error.message);
+  } else {
+    console.log("[Backtest] ✅ Saved to Supabase backtest_runs");
+  }
 }

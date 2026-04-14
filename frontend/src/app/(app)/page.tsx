@@ -212,6 +212,11 @@ export default async function DashboardPage() {
         />
       </AnimateIn>
 
+      {/* Manual trade card — high on page for quick access */}
+      <AnimateIn delay={50} className="mb-6">
+        <ManualTradeCard markPrice={Number(latestMarket?.price) || 0} />
+      </AnimateIn>
+
       {/* Kill switch banner — highest priority, sits above the pause banner */}
       {latestRisk?.killed && (
         <Card className="mb-6 border-destructive/60 bg-destructive/10">
@@ -353,11 +358,6 @@ export default async function DashboardPage() {
             )}
           </CardContent>
         </Card>
-      </AnimateIn>
-
-      {/* Manual trade card */}
-      <AnimateIn delay={150} className="mt-6">
-        <ManualTradeCard markPrice={Number(latestMarket?.price) || 0} />
       </AnimateIn>
 
       {/* Log viewer */}
