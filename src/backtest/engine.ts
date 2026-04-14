@@ -19,7 +19,7 @@
 
 import { evaluateS1, resetS1State } from "../strategy/s1_ema_trend";
 import { evaluateS2, resetS2State } from "../strategy/s2_mean_reversion";
-import { evaluateS3, resetS3State } from "../strategy/s3_stoch_rsi";
+import { evaluateS3, resetS3State, S3_MIN_HOLD_MS } from "../strategy/s3_stoch_rsi";
 import { scoreSignals, getLeverageForSignals } from "../strategy/confluence";
 import type { IndicatorSnapshot, Timeframe } from "../tradingview/reader";
 import type {
@@ -133,8 +133,9 @@ function checkExit(
     }
   }
 
-  // --- S3: reverse StochRSI cross ---
+  // --- S3: reverse StochRSI cross (only after min hold time) ---
   if (strategy === "S3" && prev15m) {
+    const holdMs = bar15m.timestamp - entryTimestamp;
     const reverseBearish =
       prev15m.stochK >= prev15m.stochD &&
       bar15m.stochK   <  bar15m.stochD  &&
@@ -143,11 +144,11 @@ function checkExit(
       prev15m.stochK <= prev15m.stochD &&
       bar15m.stochK   >  bar15m.stochD  &&
       direction === "short";
-    if (reverseBearish || reverseBullish) {
+    if ((reverseBearish || reverseBullish) && holdMs >= S3_MIN_HOLD_MS) {
       return { exit: true, exitPrice: bar15m.close, reason: "stoch_rsi_reverse_cross" };
     }
     // 2-hour max hold
-    if (bar15m.timestamp - entryTimestamp >= 2 * 60 * 60 * 1000) {
+    if (holdMs >= 2 * 60 * 60 * 1000) {
       return { exit: true, exitPrice: bar15m.close, reason: "max_hold_time" };
     }
   }

@@ -131,8 +131,6 @@ export function printResults(result: BacktestResult): void {
 // ---------------------------------------------------------------------------
 
 export function saveResultsToFile(result: BacktestResult): string {
-  const outPath = path.join(process.cwd(), "backtest-results.json");
-
   const serialisable = {
     ...result,
     generatedAt: new Date().toISOString(),
@@ -144,6 +142,22 @@ export function saveResultsToFile(result: BacktestResult): string {
     })),
   };
 
-  fs.writeFileSync(outPath, JSON.stringify(serialisable, null, 2));
-  return outPath;
+  const json = JSON.stringify(serialisable, null, 2);
+
+  // ── Save to backtest-results/ directory (one file per run) ──────────────
+  const dir = path.join(process.cwd(), "backtest-results");
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+
+  const now  = new Date();
+  const date = now.toISOString().slice(0, 10).replace(/-/g, "");            // 20260414
+  const time = now.toTimeString().slice(0, 8).replace(/:/g, "");            // 132500
+  const filename = `${result.config.days}d-${date}-${time}.json`;
+  const runPath = path.join(dir, filename);
+  fs.writeFileSync(runPath, json);
+
+  // ── Also keep backtest-results.json for backward compat ─────────────────
+  const legacyPath = path.join(process.cwd(), "backtest-results.json");
+  fs.writeFileSync(legacyPath, json);
+
+  return runPath;
 }

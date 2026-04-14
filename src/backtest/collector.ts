@@ -54,30 +54,46 @@ interface RawCandle {
 // Fetch
 // ---------------------------------------------------------------------------
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 async function fetchPage(
   interval: string,
   startTime: number,
   endTime: number,
 ): Promise<RawCandle[]> {
-  const res = await fetch(HL_API, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      type: "candleSnapshot",
-      req: { coin: "BTC", interval, startTime, endTime },
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Hyperliquid API ${res.status}: ${await res.text()}`);
+  const delays = [3000, 8000, 20000, 40000, 60000]; // retry after 3s, 8s, 20s, 40s, 60s
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    const res = await fetch(HL_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "candleSnapshot",
+        req: { coin: "BTC", interval, startTime, endTime },
+      }),
+    });
+    if (res.status === 429) {
+      if (attempt === delays.length) throw new Error(`Hyperliquid API 429 after ${attempt} retries`);
+      const wait = delays[attempt];
+      console.log(`[Collector] Rate limited — waiting ${wait / 1000}s (attempt ${attempt + 1}/${delays.length})...`);
+      await sleep(wait);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`Hyperliquid API ${res.status}: ${await res.text()}`);
+    }
+    const data = await res.json() as unknown;
+    if (!Array.isArray(data)) throw new Error("Unexpected candle response shape");
+    return data as RawCandle[];
   }
-  const data = await res.json() as unknown;
-  if (!Array.isArray(data)) throw new Error("Unexpected candle response shape");
-  return data as RawCandle[];
+  throw new Error("fetchPage: unreachable");
 }
 
 /**
  * Fetches all candles for `timeframe` between `startMs` and `endMs` (epoch ms),
- * paginating automatically if needed.
+ * paginating backwards. Hyperliquid's candleSnapshot anchors to endTime and
+ * returns the most-recent N bars within [startTime, endTime]. To get a full
+ * multi-month window we must walk the window backwards: after each page, set
+ * endTime = firstBar.timestamp - 1 and repeat until we've covered startMs.
  */
 export async function fetchCandles(
   timeframe: string,
@@ -88,17 +104,18 @@ export async function fetchCandles(
   if (!interval) throw new Error(`Unknown timeframe: ${timeframe}`);
 
   const all: RawCandle[] = [];
-  let cursor = startMs;
+  let windowEnd = endMs;
   let requests = 0;
 
-  while (cursor < endMs && requests < MAX_REQUESTS) {
+  while (windowEnd > startMs && requests < MAX_REQUESTS) {
+    if (requests > 0) await sleep(1500); // pause between pages to avoid 429
     requests++;
-    const page = await fetchPage(interval, cursor, endMs);
+    const page = await fetchPage(interval, startMs, windowEnd);
     if (page.length === 0) break;
     all.push(...page);
-    const lastTs = page[page.length - 1].t;
-    if (lastTs >= endMs) break; // covered full range
-    cursor = lastTs + 1;
+    const firstTs = page[0].t;
+    if (firstTs <= startMs) break; // covered full range back to startMs
+    windowEnd = firstTs - 1;      // move window backwards
   }
 
   // Deduplicate and sort ascending
@@ -184,13 +201,14 @@ export async function collectAllTimeframes(
     return buildBarData(candles);
   };
 
-  // Fetch all four timeframes in parallel
-  const [bars15m, bars1H, bars4H, bars1D] = await Promise.all([
-    fetchTF("15m"),
-    fetchTF("1H"),
-    fetchTF("4H"),
-    fetchTF("1D"),
-  ]);
+  // Fetch sequentially to avoid Hyperliquid 429 rate limits
+  const bars15m = await fetchTF("15m");
+  await sleep(3000);
+  const bars1H = await fetchTF("1H");
+  await sleep(3000);
+  const bars4H = await fetchTF("4H");
+  await sleep(3000);
+  const bars1D = await fetchTF("1D");
 
   return { bars15m, bars1H, bars4H, bars1D, backtestStartMs };
 }

@@ -6,7 +6,7 @@ import {
   LayoutDashboard,
   BarChart3,
   ArrowLeftRight,
-  Cpu,
+  FlaskConical,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -15,7 +15,7 @@ const tabs = [
   { href: "/", label: "Home", icon: LayoutDashboard },
   { href: "/market-data", label: "Market", icon: BarChart3 },
   { href: "/trades", label: "Trades", icon: ArrowLeftRight },
-  { href: "/strategies", label: "Strategy", icon: Cpu },
+  { href: "/backtests", label: "Backtest", icon: FlaskConical },
   { href: "/automation", label: "Auto", icon: Zap },
 ];
 

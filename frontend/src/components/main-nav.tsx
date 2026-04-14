@@ -10,6 +10,7 @@ const links = [
   { href: "/trades", label: "Trades" },
   { href: "/strategies", label: "Strategies" },
   { href: "/automation", label: "Automation" },
+  { href: "/backtests", label: "Backtests" },
 ];
 
 export function MainNav() {

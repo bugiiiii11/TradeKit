@@ -17,6 +17,18 @@ import { Signal } from "./types";
 
 const S3_STOP_DISTANCE = 0.004; // 0.4% — midpoint of 0.3–0.5% range
 
+/** Minimum hold time before allowing stoch_rsi_reverse_cross exit.
+ *  Backtest analysis (90d, 102 S3 trades): all reverse-cross exits at
+ *  ≤45min were losses (15 trades, -$3.75). Blocking early noise exits
+ *  lets winners ride to TP/max_hold instead of chopping out. */
+export const S3_MIN_HOLD_MS = 45 * 60 * 1000; // 45 minutes (3 bars)
+
+/** 1H BBWP must be below this threshold for S3 entry.
+ *  Low BBWP = narrow Bollinger Bands = low-volatility regime where
+ *  StochRSI overbought/oversold extremes actually mean-revert.
+ *  High BBWP = wide bands = trending/volatile → StochRSI crosses are noise. */
+export const S3_BBWP_MAX = 40;
+
 /** Price must be within this % of EMA21 to qualify as "near" it */
 const EMA21_PROXIMITY_THRESHOLD = 0.005; // 0.5%
 
@@ -51,6 +63,9 @@ function checkStochCross(
   // Detect %K/%D crossover
   const bullishCross = prevK <= prevD && stochK > stochD;
   const bearishCross = prevK >= prevD && stochK < stochD;
+
+  // BBWP filter — skip entries in high-volatility regimes
+  if (snap1H.bbwp >= S3_BBWP_MAX) return null;
 
   // Long: %K crosses above %D from below 20 (oversold recovery)
   if (
@@ -110,11 +125,15 @@ export function shouldExitS3(
   const prevK = prev15m.stochK;
   const prevD = prev15m.stochD;
 
-  // Reverse Stoch RSI cross
+  // Reverse Stoch RSI cross — only after minimum hold time
+  const entryMs = new Date(entryTimestamp).getTime();
+  const nowMs = Date.now();
+  const holdMs = nowMs - entryMs;
+
   const reverseBearish = prevK >= prevD && stochK < stochD && positionDirection === "long";
   const reverseBullish = prevK <= prevD && stochK > stochD && positionDirection === "short";
 
-  if (reverseBearish || reverseBullish) {
+  if ((reverseBearish || reverseBullish) && holdMs >= S3_MIN_HOLD_MS) {
     return { exit: true, reason: "stoch_rsi_reverse_cross" };
   }
 
@@ -122,9 +141,6 @@ export function shouldExitS3(
   // placed at entry time by main.ts. No soft TP check needed here.
 
   // 2-hour max hold
-  const entryMs = new Date(entryTimestamp).getTime();
-  const nowMs = Date.now();
-  const holdMs = nowMs - entryMs;
   if (holdMs >= 2 * 60 * 60 * 1000) {
     return { exit: true, reason: "max_hold_time" };
   }
