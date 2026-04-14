@@ -5,15 +5,15 @@
 
 ## Current State
 
-- **Bankroll:** ~$499.82 USDC on Hyperliquid mainnet (Perps account) — minor test trade fees deducted in Session 13. No strategy-driven LIVE trades have fired yet; all ticks result in `No signals this tick` (bearish macro, confluence 0/3). Several manual test trades executed via `test_custom_trade.ts`.
+- **Bankroll:** ~$499.47 USDC on Hyperliquid mainnet (Perps account) — minor test trade fees deducted in Session 13. No strategy-driven LIVE trades have fired yet; all ticks result in `No signals this tick` (bearish macro, confluence 0/3).
 - **Master wallet:** `0x3a8a318097017aCE0db8276ea435F26DE8674C46` (MetaMask)
 - **API wallet (agent):** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (Hyperliquid — trade-only, no withdraw permission)
 - **Network:** mainnet
-- **Mode:** **LIVE** — bot restarted in Session 13 with MCP reconnect code. Hydration validated (`[Bot] Hydrated risk state from 2026-04-13T18:35:19`). Clean ticks observed. Balance stable. Week-1 clamps still active in source. Killed state: `false`. **Margin mode switched from cross to isolated** in Session 13.
-- **Strategy:** BTC perpetual futures, 3 strategies (S1/S2/S3), multi-timeframe confluence
-- **GitHub:** `github.com/bugiiiii11/TradeKit` — 11 commits, auto-deploys to Vercel
-- **Vercel:** `trade-kit.vercel.app` — frontend dashboard (Next.js 16, Supabase auth). **Supabase env vars (#28) and Auth redirect URLs (#27) configured in Session 13.** Sign-ups disabled — only existing account can log in.
-- **Last session:** 13 — 2026-04-13 — **MCP reconnect, isolated margin, take-profit + scaled TPs, manual trade tracking.** Completed Vercel auth setup, switched to isolated margin, added MCP retry/reconnect, built take-profit and scaled take-profit order functions, created manual trade test script with Supabase logging, split Trades page into Bot/Manual sections.
+- **Mode:** **LIVE** — Session 14+15 code running in PowerShell window. Clean startup: hydration confirmed, 3 ticks observed, all `No signals this tick`. Killed state: `false`. Isolated margin.
+- **Strategy:** BTC perpetual futures, 3 strategies (S1/S2/S3), multi-timeframe confluence. Per-strategy fixed leverage (S1=10x, S2=8x, S3=5x), 5% margin-based sizing, S3 scaled TPs (1%/3%/5%). **Session 15: manual trade card on dashboard — place trades from browser via command bus.**
+- **GitHub:** `github.com/bugiiiii11/TradeKit` — 13 commits, auto-deploys to Vercel
+- **Vercel:** `trade-kit.vercel.app` — frontend dashboard (Next.js 16, Supabase auth). Sign-ups disabled — only existing account can log in.
+- **Last session:** 15 — 2026-04-14 — **Manual trade card (dashboard → command bus → Hyperliquid).**
 
 ## Architecture
 
@@ -48,7 +48,7 @@ Hyperliquid mainnet
 | `src/strategy/s3_stoch_rsi.ts` | 15m Stoch RSI cross + 1H EMA21 proximity, 2h max hold |
 | `src/strategy/confluence.ts` | Full confluence table + Daily EMA200 macro filter |
 | `src/risk/manager.ts` | Drawdown limits, pause logic, concurrent position cap |
-| `src/risk/sizing.ts` | Position sizing from risk% + stop distance |
+| `src/risk/sizing.ts` | Session 14 — `calcMarginBasedSize`: 5% of bankroll as margin, leverage applied on top. Replaced stop-distance-based sizing. |
 | `src/risk/state.ts` | Bankroll, daily/weekly PnL, consecutive losses tracking |
 | `BTC_TRADING_STRATEGY_KB.md` | Strategy KB — source of truth for strategy logic |
 | `.env` | Secrets — NEVER read, NEVER commit |
@@ -108,6 +108,14 @@ Hyperliquid mainnet
 | `src/db/trades.ts` | Session 13 — Added `source` field (`"bot"` \| `"manual"`, default `"bot"`). `TradeSource` type exported. |
 | `src/scripts/test_custom_trade.ts` | Session 13 — CLI manual trade script: `<direction> <leverage> <sl%> <tp_levels> <notional>`. Supports scaled TPs (PowerShell: quote `"1,1.5,2"`). Pre-checks $10 min per TP slice. Monitors every 10s, detects partial TP fills, auto-closes on 30min timeout or Ctrl+C. Logs to Supabase with `source: "manual"`. |
 | `frontend/src/app/(app)/trades/page.tsx` | Session 13 — Split into Bot Trades + Manual Trades sections with independent stats badges. Added leverage column. Extracted reusable `TradeTable` component. |
+| `src/strategy/confluence.ts` | Session 14 — Added `getLeverageForSignals(signals)`: S1=10x, S2=8x, S3=5x fixed per-strategy. Overrides confluence scorer's leverage output. |
+| `src/main.ts` | Session 14 — Removed week-1 LIVE clamp block. Uses `getLeverageForSignals` + `calcMarginBasedSize`. S3 entries place scaled TPs via `setScaledTakeProfits`. |
+| `src/risk/manager.ts` | Session 14 — `MAX_OPEN_POSITIONS` restored to 3 (was 1 during week-1 cap). |
+| `src/commands/handlers.ts` | Session 15 — Added `handleManualTrade`: validates payload, checks killed state + existing position, fetches mark price, places market order, waits 3s, sets SL + up to 3 scaled TPs. Returns full result (entryPrice, oids, tpCount). |
+| `src/db/commands.ts` | Session 15 — `manual_trade: handleManualTrade` wired into HANDLERS dispatcher. |
+| `frontend/src/app/actions/commands.ts` | Session 15 — Added `"manual_trade"` to `CommandType`, `result` field on `CommandActionResult` (read from `bot_commands.result` column after poll), `issueManualTrade()` wrapper. |
+| `frontend/src/components/manual-trade-card.tsx` | Session 15 — New Client Component. 2-col layout: Long/Short toggle, leverage, USD size, SL price on left; 1–3 TP levels (auto-split 100% / 50+50 / 50+25+25) + submit on right. Confirmation dialog before submit. Shows BTC ref price from latest market snapshot. |
+| `frontend/src/app/(app)/page.tsx` | Session 15 — `ManualTradeCard` added between main grid and bot logs. Passes `markPrice` from latest market snapshot. |
 
 ## Test Scripts
 
@@ -880,14 +888,49 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 - **TV-sleep recovery (#21).** Medium-risk, touches the main loop's hot path. Deferred to avoid another LIVE-impacting change in the same session as the OOM incident.
 - **Week-1 clamp removal.** Still not ready — no LIVE trade has fired, clamp logging still unobserved, and today's involuntary DRY_RUN demotion reset the clock. Target bumped.
 
+## What Was Done (Session 14) — Aggressive sizing, per-strategy leverage, S3 scaled TPs
+
+1. **Switched to margin-based position sizing** — new `calcMarginBasedSize()` in `src/risk/sizing.ts`. Each trade now allocates 5% of current bankroll as margin, then levers up. Portfolio compounds automatically: $500 → $600 bankroll means next trade uses $30 margin. Files: `src/risk/sizing.ts`, `src/main.ts`.
+
+2. **Fixed per-strategy leverage** — `STRATEGY_LEVERAGE` map added to `src/strategy/confluence.ts` (S1=10x, S2=8x, S3=5x) with `getLeverageForSignals()` helper. Confluence scorer's variable leverage output is now ignored for order sizing; strategy identity determines leverage. When multiple strategies align, highest-priority wins (S1 > S2 > S3). Files: `src/strategy/confluence.ts`, `src/main.ts`.
+
+3. **S3 scaled take-profits** — after any S3 entry, bot places three native Hyperliquid TP trigger orders: 33% of position at +1%, 33% at +3%, 34% at +5% from entry price. Uses existing `setScaledTakeProfits()` from `src/hyperliquid/orders.ts`. Removed the old soft 1% loop-tick TP check from `shouldExitS3`. S3 still exits on reverse Stoch RSI cross and 2h max hold. Files: `src/main.ts`, `src/strategy/s3_stoch_rsi.ts`.
+
+4. **S1 and S2 exits unchanged** — kept indicator-based exits (S1: reverse EMA8/EMA55 cross; S2: PMARP reversal / BBWP expansion / EMA cross). No native TP orders for these strategies by design — S1 rides the trend, S2 exits when the overextension signal fires.
+
+5. **Removed week-1 LIVE clamps** — deleted the 2x leverage cap and 1% risk cap block from `src/main.ts`. Restored `MAX_OPEN_POSITIONS = 3` in `src/risk/manager.ts`.
+
+6. **BTC_TRADING_STRATEGY_KB.md updated** — bumped to v1.1, updated leverage table, position sizing formula, S3 exit conditions, confluence scoring table.
+
+> **Bot needs restart** to pick up these changes. Ctrl+C current PS window → `$env:DRY_RUN="false"; npm start`.
+
+## What Was Done (Session 15) — Manual trade card (dashboard → command bus → Hyperliquid)
+
+1. **Bot restarted with Session 14 code** — clean startup: `[Bot] Hydrated risk state from 2026-04-13T23:38:30` confirmed, 3 ticks observed at 15-min cadence, all `No signals this tick` (bearish macro). Balance $499.47.
+
+2. **TV sleep issue resolved** — Windows configured to never sleep. Marked task #21 closed.
+
+3. **Manual trade card built and pushed** — 5 files changed, 2 commits pushed to GitHub (`f07f98a` + `fd745af`), Vercel auto-deploy triggered.
+
+   **Bot side:**
+   - `src/commands/handlers.ts`: `handleManualTrade(payload, ctx)` — validates direction/leverage/notional/SL/TPs, checks killed state + existing BTC position, fetches mark price, places market order, waits 3s, sets SL and up to 3 TP levels via `setTakeProfit`. Server-side validates SL/TP direction relative to mark price. Returns `{ entryPrice, sizeBase, slOid, tpOids, ... }`.
+   - `src/db/commands.ts`: `manual_trade: handleManualTrade` added to HANDLERS.
+
+   **Frontend side:**
+   - `frontend/src/app/actions/commands.ts`: `"manual_trade"` added to `CommandType`; `issueCommand` now reads `result` column from `bot_commands` and returns it; `issueManualTrade(params)` wrapper added.
+   - `frontend/src/components/manual-trade-card.tsx`: New Client Component. 2-col layout on desktop. Long/Short toggle (green/red), leverage + size inputs, SL price, 1–3 TP levels. Portions auto-split (100% / 50%+50% / 50%+25%+25%). `window.confirm` before submit. Success toast shows entry price + SL + TP count.
+   - `frontend/src/app/(app)/page.tsx`: Card rendered between main grid and bot logs.
+
+4. **Backtesting scoped for next session** — agreed approach: use `data_get_study_values` arrays (all visible bars per indicator) from TradingView MCP as historical data source. Build `src/scripts/backtest.ts` engine + frontend page.
+
 ## What To Do Next
 
-> **Next session plan (Session 14):** Bot is LIVE with MCP reconnect, isolated margin, and take-profit support. Main priorities:
+> **Next session plan (Session 16):** Manual trade card deployed to Vercel. Main priorities:
 >
-> 1. **Wait for first LIVE trade** — market is bearish (price ~14% below EMA200). S3 short is the most likely signal. Week-1 clamps still unobserved.
-> 2. **Verify manual trade Supabase logging** — run `test_custom_trade.ts`, let it close (SL or TP), confirm the trade appears in the Manual Trades section on `trade-kit.vercel.app/trades`.
-> 3. **Wire scaled TPs into bot strategies** — currently only the test script uses them. Consider adding TP support to the main loop's entry flow (alongside stop-loss).
-> 4. **Consider multi-asset support** — user expressed interest in ETH/SOL trading. Requires new TV charts, strategy params, and multi-asset order module.
+> 1. **Test manual trade card end-to-end** — open dashboard, fill form (small size), submit, verify order on Hyperliquid + SL/TP on Open Orders + command row in Automation page.
+> 2. **Wait for first LIVE strategy trade** — bearish macro persists. S3 short most likely first signal.
+> 3. **Verify S3 TP placement** — after first S3 entry, confirm 3 TP orders appear on Hyperliquid Open Orders.
+> 4. **Backtesting engine** — `src/scripts/backtest.ts` using TradingView MCP historical bar data + frontend page.
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
@@ -910,8 +953,8 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 | 17 | Frontend — build Trades / Strategies / Automation / Backtests pages | low | ✅ **Trades / Strategies / Automation DONE Session 11** — see Session 11 writeup section 1. Still open: **Backtests page stub** (reading from `backtest_runs` — 0 rows today, minimal value until a backtest engine exists; deferrable). |
 | 18 | ~~Frontend — add email allowlist to prevent random OTP sign-ups~~ | — | ✅ **Done Session 13.** User disabled "Allow new users to sign up" in Supabase Auth settings. Only existing `contact@mdntech.org` account can log in. |
 | 19 | ~~Frontend — wrap the dashboard in a `(app)` route group with a shared layout~~ | — | ✅ **Done Session 11.** Refactor landed alongside the new Trades/Strategies/Automation pages. Layout fetches user once, renders `<SiteHeader>` + `<main>` wrapper. Closes this item. |
-| 20 | **Remove week-1 LIVE clamps** | low | Target: **2026-04-25** (1 week after re-flip to LIVE, assuming Session 12 re-flips). Bumped from Session 10's original 2026-04-18 target because the Session 11 OOM incident reset the LIVE clock. Remove the clamp block in `src/main.ts` (below `scoreSignals`) and restore `MAX_OPEN_POSITIONS = 3` in `src/risk/manager.ts`. Both spots have TEMP comments pointing here. Do NOT do this until at least one LIVE trade has fired + closed cleanly and we've verified week-1 clamp log lines appeared. |
-| 21 | **TradingView Desktop state loss on Windows sleep** | med | **Discovered Session 10.** After laptop sleep, TV Desktop loses its chart/indicators and `data_get_study_values` returns 0 studies → bot goes blind until TV is relaunched. Per-tick `try/catch` prevents crash but LIVE positions would have stale `checkExits`. Operational mitigation for week 1: keep laptop awake on AC power. Longer-term code fix: add a TV-state sanity check at bot startup and/or on persistent empty-study errors (would go in `src/tradingview/reader.ts` + `src/main.ts`). **Session 11 punted this deliberately to avoid another main-loop change same-session as the OOM incident.** Top candidate for Session 12 if user picks Path B. |
+| 20 | ~~**Remove week-1 LIVE clamps**~~ | — | ✅ **Done Session 14.** Clamp block deleted from `src/main.ts`, `MAX_OPEN_POSITIONS` restored to 3 in `manager.ts`. Replaced with permanent per-strategy fixed leverage (S1=10x, S2=8x, S3=5x) and margin-based sizing (5% of bankroll). |
+| 21 | ~~**TradingView Desktop state loss on Windows sleep**~~ | — | ✅ **Resolved Session 15.** Windows configured to never sleep. |
 | 22 | ~~**Verify frontend `turbopack.root` fix landed**~~ | — | ✅ **Done Session 11 — the hard way.** Session 10's `next.config.ts` was actually broken (ESM/CJS interop, `ReferenceError: exports is not defined`). Session 11's first follow-up (`process.cwd()`) was ALSO broken — caused the Turbopack OOM crash-loop that froze the laptop and killed the LIVE bot for 3h. **Final fix:** switched to `next.config.js` (CJS) using `__dirname`, which matches the canonical Next docs example and works first-try. Verified end-to-end: `next build` clean, `next dev` ready in 1.17s, all 4 app routes respond correctly. See Session 11 writeup section 2 for the full incident postmortem. |
 | 23 | **Frontend Backtests page stub** | trivial | Only remaining piece of task #17. Reads `backtest_runs` — currently 0 rows. Adds `(app)/backtests/page.tsx` with a table that shows an empty state until a backtest engine exists. Zero-risk UI work, defer until backtest engine is built. |
 | 24 | ~~**Frontend mobile nav**~~ | — | ✅ **Done Session 12.** Bottom tab bar with 5 icons, hidden on desktop, safe area padding. |
@@ -920,8 +963,10 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 | 27 | ~~**Supabase Auth: update Site URL + Redirect URLs for Vercel**~~ | — | ✅ **Done Session 13.** User updated Site URL to `https://trade-kit.vercel.app` and added redirect URL `https://trade-kit.vercel.app/**`. Login tested end-to-end on production. |
 | 28 | ~~**Frontend: add Vercel env vars**~~ | — | ✅ **Done Session 13.** User added `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in Vercel dashboard. |
 | 29 | **Verify manual trade Supabase logging** | low | `test_custom_trade.ts` logs to `trades` table with `source: "manual"`, but no trade has completed end-to-end yet (all were killed early or script restarted). Run one trade to SL/TP completion and confirm it appears on the Trades page. |
-| 30 | **Wire take-profits into bot strategies** | med | Currently only `test_custom_trade.ts` uses `setTakeProfit` / `setScaledTakeProfits`. The main loop's entry flow only places stop-losses. Add TP support to `main.ts` entry block, possibly scaled per strategy (S1: single TP, S3: scaled 50/25/25). |
+| 30 | ~~**Wire take-profits into bot strategies**~~ | — | ✅ **Done Session 14 (S3).** S3 now places 3 native TP orders at entry: 33%@+1%, 33%@+3%, 34%@+5%. S1 and S2 keep indicator-based exits by design (trend-ride / PMARP-BBWP). |
 | 31 | **Multi-asset support (ETH/SOL)** | high | User interested. Requires new TV charts + indicators, strategy params per asset, dynamic asset index in orders module, risk manager changes for concurrent cross-asset positions. Major architectural expansion. |
+| 32 | **Test manual trade card end-to-end** | med | Session 15 built but not yet tested from dashboard. Open Vercel app, fill form, submit, verify: order on Hyperliquid, SL + TP orders on Open Orders, `bot_commands` row status=done, toast success. Use small size ($20–30). |
+| 33 | **Backtesting engine** | med | Use TradingView MCP `data_get_study_values` arrays (all visible bars per indicator) as historical data. Build `src/scripts/backtest.ts` + frontend backtests page. Scope: 15m chart, zoom out ~500 bars, replay S1/S2/S3 logic bar-by-bar, output equity curve + per-trade stats. |
 
 ## Untested Code Paths
 
@@ -954,12 +999,16 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 | **Frontend error page / bad OTP flow (Session 7)** | Callback route handles missing `code` and exchange failure by redirecting to `/login?error=...`, but `/login` doesn't render the error message | Bad magic link → redirect loop with silent failure |
 | **`exchangeCodeForSession` in `auth/callback/route.ts` (Session 7)** | Ran exactly once on first sign-in this session | Future OAuth providers / repeat sign-ins untested |
 | **Kill switch close-all in LIVE mode (Session 8)** | DRY_RUN skipped the Hyperliquid close calls — only the "no positions to close" branch ran in verification | First LIVE kill with real positions could fail to close; may leave positions open while dashboard shows "killed". Gate on first LIVE trade. |
+| **`handleManualTrade` full path (Session 15)** | Built but never triggered from dashboard. The entire dashboard → `issueManualTrade` → `bot_commands` INSERT → Realtime delivery → `handleManualTrade` → Hyperliquid orders path is untested. | Bad SL/TP logic, order rejection, or rounding bug could place an unprotected position. Test with small size ($20–30) from Vercel app before relying on it. |
 | ~~**Command bus startup sweep with actual pending commands (Session 8)**~~ | ✅ **Validated Session 11** — pending `kill_switch` from 19:07 UTC consumed on restart at 21:54 UTC after OOM recovery (see Session 11 writeup). The claim → execute → write-back cycle ran end-to-end against a real pending row. | — |
 | **Command handler failure path (Session 8)** | All verification commands succeeded — the `status='failed'` + `error` write-back branch never executed | A failing handler might not write its error back correctly; dashboard would see a command stuck in `running` forever |
 | **Realtime reconnect after WebSocket drop (Session 8)** | No network hiccups during verification | Commands silently ignored after a brief drop; no backoff/retry implemented; user would click buttons with no effect until next bot restart |
 | **Frontend action 15s timeout path (Session 8)** | Bot responded in ~300–500 ms every time | If the bot is slow (LIVE multi-position close) or offline, timeout message shown — not verified that the error toast renders correctly |
 | **`setKilled` exposure zero-out (Session 8)** | Always called from `handleKillSwitch` when `activePositions[]` was empty | If the bot ever enters killed state WHILE holding positions, the zeroing-out behavior hasn't been observed in a real state transition |
 | **MCP reconnect under real failure (Session 13)** | Implemented retry + reconnect but no real TradingView crash has occurred since deployment | If the reconnect logic has a bug (e.g., transport teardown doesn't actually kill child process), the bot would loop-fail every tick instead of recovering |
+| **`calcMarginBasedSize` in a live trade (Session 14)** | Bot not restarted with new code yet — no trade has fired under the new sizing logic | Sizing wrong → position too large (over-leveraged) or too small (underutilized) |
+| **S3 scaled TPs via `setScaledTakeProfits` in main loop (Session 14)** | TP code path in `main.ts` is new — only `test_custom_trade.ts` has exercised `setScaledTakeProfits` previously | TPs not placed after S3 entry; position runs unmanaged to reverse-cross or 2h timeout |
+| **Per-strategy leverage (10x/8x/5x) under live conditions (Session 14)** | `getLeverageForSignals()` is new; no trade has fired under it yet | Wrong leverage applied to first real trade |
 | **`setTakeProfit` trigger execution (Session 13)** | TP orders placed and confirmed on Hyperliquid Open Orders, but no TP has actually triggered (trades closed manually or via kill switch) | If Hyperliquid's TP trigger behavior differs from SL (e.g., partial fill semantics), the TP might not execute as expected |
 | **`setScaledTakeProfits` partial fill cascade (Session 13)** | 3 TP orders confirmed on book, but no partial TP has triggered yet | If TP1 fires but the remaining TPs reference stale position size, they might fail or behave unexpectedly |
 | **`insertClosedTrade` with `source: "manual"` (Session 13)** | Test trades were all closed via kill switch or Ctrl+C before the Supabase write executed | The Supabase insert with the new `source` column hasn't been confirmed end-to-end yet |
@@ -969,38 +1018,30 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 ## Risk Configuration
 
 **Portfolio-level (in `src/risk/manager.ts`):**
-- Max concurrent positions: **1** ⚠️ TEMP week-1 cap (Session 9) — KB default is 3
+- Max concurrent positions: **3**
 - Max total exposure: **60%** of bankroll
 - Daily drawdown limit: **10%** → 24h pause
 - Weekly drawdown limit: **15%** → 48h pause
 - Consecutive loss limit: **3** → 4h pause
 
-**Per-trade risk (from confluence scorer in `src/strategy/confluence.ts`, UNCHANGED):**
-- All 3 strategies align: 5% bankroll risk, 8-10x leverage (very high conviction)
-- S1+S2 align: 5% risk, 6x leverage
-- S1+S3 align: 5% risk, 5x leverage
-- S2+S3 align: 2% risk, 4x leverage
-- Single strategy only: 2% risk, 3x leverage
-- Near Daily EMA200 (±1%): risk halved
+**Per-trade sizing (margin-based, Session 14):**
+- Margin per trade: **5% of current bankroll** (e.g. $25 at $500 bankroll)
+- S1 leverage: **10x** → $250 notional at $500 bankroll
+- S2 leverage: **8x** → $200 notional at $500 bankroll
+- S3 leverage: **5x** → $125 notional at $500 bankroll
+- Portfolio compounds: bankroll updates each trade, next trade's margin = 5% of new bankroll
 
-**⚠️ Week-1 LIVE clamps (Session 9, in `src/main.ts` after `scoreSignals`):**
-- `confluence.leverage` clamped to **max 2x** (overrides 3-10x from scorer)
-- `confluence.riskPercent` clamped to **max 1%** (overrides 2-5% from scorer)
-- When clamping fires, bot logs `[Bot] Week-1 cap: clamping leverage Nx → 2x` and `... risk N% → 1%`
-- **Remove both clamps after first LIVE week is proven.** Plus restore `MAX_OPEN_POSITIONS = 3` in `manager.ts`.
-
-**Effective budget for first week LIVE:**
-- Max risk per trade: ~$5.00 (1% of $499.71)
-- Max notional: ~$10-25 (depends on stop distance)
-- Max concurrent: 1 position
-- Max leverage: 2x
+**Effective exposure at $499.82 bankroll:**
+- S1 trade: $24.99 margin → $249.90 notional
+- S2 trade: $24.99 margin → $199.92 notional
+- S3 trade: $24.99 margin → $124.95 notional
 - Daily drawdown trip: ~$50 → 24h pause
 - Weekly drawdown trip: ~$75 → 48h pause
 
 ## Background Processes (when you last left)
 
 - **TradingView Desktop** with CDP port 9222 — user relaunched mid-Session 11 after the OOM incident. Chart is `BINANCE:BTCUSDC` with 9 indicators loaded. Relaunch via `launch_tradingview.ps1` if needed.
-- **LIVE bot (Session 12)** — ✅ **RUNNING** in a PowerShell window. Started at Session 12 start (2026-04-13) with `$env:DRY_RUN="false"; npm start`. **Mode: LIVE.** Running Session 11's code (including risk hydration). Hydration validated on startup. Week-1 clamps still active in source. Killed state: `false`. Balance $499.71. 0 positions, 0 orders. 20+ clean ticks observed. No signals (bearish macro, confluence 0/3).
+- **LIVE bot** — ⚠️ **RUNNING but stale** — still running Session 13 code. **Must restart** to pick up Session 14 changes (new sizing, leverage, S3 TPs). Ctrl+C → `$env:DRY_RUN="false"; npm start`. Killed state: `false`. Balance ~$499.82. 0 positions, 0 orders.
 - **DRY_RUN bot (Session 11)** — 💀 **DEAD.** Replaced by the Session 12 LIVE bot above.
 - **LIVE bot (Session 10)** — 💀 **DEAD.** Replaced during Session 11 recovery.
 - **tradingview-mcp** — spawned as a child by the active bot. Lives as long as the parent. Will die on Ctrl+C of the bot.
