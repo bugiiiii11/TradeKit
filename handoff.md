@@ -5,15 +5,15 @@
 
 ## Current State
 
-- **Bankroll:** ~$499.47 USDC on Hyperliquid mainnet (Perps account) — minor test trade fees deducted in Session 13. No strategy-driven LIVE trades have fired yet; all ticks result in `No signals this tick` (bearish macro, confluence 0/3).
+- **Bankroll:** ~$500.26 USDC on Hyperliquid mainnet (Perps account). No strategy-driven LIVE trades have fired yet; all ticks result in `No signals this tick` (bearish macro, confluence 0/3).
 - **Master wallet:** `0x3a8a318097017aCE0db8276ea435F26DE8674C46` (MetaMask)
 - **API wallet (agent):** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (Hyperliquid — trade-only, no withdraw permission)
 - **Network:** mainnet
-- **Mode:** **LIVE** — Session 14+15 code running in PowerShell window. Clean startup: hydration confirmed, 3 ticks observed, all `No signals this tick`. Killed state: `false`. Isolated margin.
-- **Strategy:** BTC perpetual futures, 3 strategies (S1/S2/S3), multi-timeframe confluence. Per-strategy fixed leverage (S1=10x, S2=8x, S3=5x), 5% margin-based sizing, S3 scaled TPs (1%/3%/5%). **Session 15: manual trade card on dashboard — place trades from browser via command bus.**
-- **GitHub:** `github.com/bugiiiii11/TradeKit` — 13 commits, auto-deploys to Vercel
+- **Mode:** **LIVE** — Session 18 code running in PowerShell window. Clean startup: hydration confirmed, ticks observed, all `No signals this tick`. Killed state: `false`. Isolated margin. **Needs restart** to pick up reconciliation commit `0155e74`.
+- **Strategy:** BTC perpetual futures, 3 strategies (S1/S2/S3), multi-timeframe confluence. Per-strategy fixed leverage (S1=10x, S2=8x, S3=5x), 5% margin-based sizing, S3 scaled TPs (1%/3%/5%). **Session 18: S3 tuned — BBWP<40 entry filter + 45min min hold exit.**
+- **GitHub:** `github.com/bugiiiii11/TradeKit` — 17 commits, auto-deploys to Vercel
 - **Vercel:** `trade-kit.vercel.app` — frontend dashboard (Next.js 16, Supabase auth). Sign-ups disabled — only existing account can log in.
-- **Last session:** 16 — 2026-04-14 — **Backtesting engine (Hyperliquid API + strategy replay).**
+- **Last session:** 18 — 2026-04-14 — **S3 overtrading fix, backtest Supabase storage, native TP/SL close detection.**
 
 ## Architecture
 
@@ -118,11 +118,15 @@ Hyperliquid mainnet
 | `frontend/src/app/(app)/page.tsx` | Session 15 — `ManualTradeCard` added between main grid and bot logs. Passes `markPrice` from latest market snapshot. |
 | `src/backtest/types.ts` | Session 16 — Shared interfaces: `BarData`, `AlignedBar`, `OpenPosition`, `BacktestTrade`, `BacktestConfig`, `BacktestResult`, `BacktestStats`. |
 | `src/backtest/indicators.ts` | Session 16 — Pure indicator functions: `computeEMA`, `computeRSI`, `computeStochRSI`, `computeBBWP` (period=13, lookback=252), `computePMARP` (period=50, lookback=200). Match TV defaults. |
-| `src/backtest/collector.ts` | Session 16 — Fetches BTC OHLCV from Hyperliquid public API (`candleSnapshot`), paginates, computes all indicators, returns `BarData[]`. All 4 TFs fetched in parallel with per-TF warmup windows. |
+| `src/backtest/collector.ts` | Session 16 — Fetches BTC OHLCV from Hyperliquid public API (`candleSnapshot`), paginates, computes all indicators, returns `BarData[]`. Session 17: fixed sequential fetching (was parallel), retry with backoff (5 attempts: 3s/8s/20s/40s/60s), 1.5s inter-page sleep, 3s inter-TF gap. **Key fix**: pagination now walks backwards (`windowEnd = firstTs - 1`) — the API anchors to endTime so forward pagination always returned the same trailing ~5000 bars regardless of `--days`. |
 | `src/backtest/aligner.ts` | Session 16 — Binary-search alignment: for each 15m bar finds the most-recent 1H/4H/1D bar at or before its timestamp. Filters out warm-up bars (any NaN indicator). |
 | `src/backtest/engine.ts` | Session 16 — Replay loop. Calls `evaluateS1/S2/S3` + `scoreSignals` for entry detection (same logic as live bot, macro filter applied). Exit logic re-implemented inline to avoid module-state ordering issues. Tracks simulated position, computes PnL with 0.035% taker fees. One position at a time (v1). |
-| `src/backtest/reporter.ts` | Session 16 — Console output (per-strategy table + risk metrics + last 15 trades) + `backtest-results.json` save at project root. |
+| `src/backtest/reporter.ts` | Session 16 — Console output (per-strategy table + risk metrics + last 15 trades). Session 17: saves to `backtest-results/{days}d-{YYYYMMDD}-{HHmmss}.json` (one file per run, never overwritten) + legacy `backtest-results.json` for backward compat. |
 | `src/scripts/backtest.ts` | Session 16 — CLI entry: `npx ts-node src/scripts/backtest.ts [--days 90] [--bankroll 500] [--margin 5]`. |
+| `frontend/src/app/(app)/backtests/page.tsx` | Session 17 — Backtests page. SSR: reads all JSON files from `backtest-results/` directory (falls back to `backtest-results.json`), sorts newest-first, passes array to `BacktestTabs`. Empty state if no files found. |
+| `frontend/src/components/backtest-tabs.tsx` | Session 17 — Client Component. Tab bar (one tab per run, label = `{days}d · {date}`), config badges, 6 stat cards, strategy breakdown table with avg win/loss/R strip, full trade log sorted newest-first. |
+| `src/scripts/migrate_backtest_runs.ts` | Session 18 — Migration script for `backtest_runs` Supabase table. Outputs SQL if `exec_sql` RPC unavailable. |
+| `src/hyperliquid/account.ts` | Session 18 — Added `getUserFills(sinceMs?)`: fetches BTC fills from Hyperliquid `userFillsByTime` API. Used by reconciliation loop to get real exit prices on native TP/SL closes. |
 
 ## Test Scripts
 
@@ -137,7 +141,7 @@ Hyperliquid mainnet
 | `src/scripts/test_stop_cleanup.ts` | Session 9 — validates `closePosition`'s auto-cleanup of resting reduce-only stops. Opens $20 long + stop + closePosition + asserts 0 BTC orders remain | ✅ PASS 2026-04-11 — net cost $0.0173. **Note:** `cancelOpenBtcStops` found 0 stops during the test — Hyperliquid's native behavior already removed the reduce-only trigger when the position closed. Our helper is now a defensive safety net. |
 | `src/scripts/test_risk_hydration.ts` | Session 11 — validates risk state hydration end-to-end. Part A: insert synthetic `risk_snapshots` row → `loadLatestRiskState()` → `hydrateState()` → assert 10 fields → delete synthetic row. Parts B-E: unit tests on `hydrateState()` for cross-day reset, expired pausedUntil clamp, future pausedUntil preserve, killed state preserve | ✅ PASS 2026-04-11 — 5/5 cases, zero pollution in `risk_snapshots` (test row cleaned up in finally block) |
 | `src/scripts/test_custom_trade.ts` | Session 13 — CLI manual trade with SL + scaled TPs. Args: `<direction> <leverage> <sl%> <tp_levels> <notional>`. Logs to Supabase with `source: "manual"`. | ✅ PASS 2026-04-13 — entry/SL/TP placement confirmed on Hyperliquid. Scaled TPs (3 levels) confirmed on Open Orders. Kill switch close validated. PowerShell gotcha: quote `"1,1.5,2"` or commas are parsed as array separators. |
-| `src/scripts/backtest.ts` | Session 16 — Replay S1/S2/S3 on historical Hyperliquid candle data. Args: `--days 90 --bankroll 500 --margin 5`. Prints stats table, saves `backtest-results.json`. | ⏳ NOT YET RUN — typecheck clean, first run pending |
+| `src/scripts/backtest.ts` | Session 16 — Replay S1/S2/S3 on historical Hyperliquid candle data. Args: `--days 90 --bankroll 500 --margin 5`. Prints stats table, saves to `backtest-results/`. | ✅ PASS 2026-04-14 — 90d: 113 trades, S2 +$12.99, total -$5.93. 365d: different trade count + date range confirmed after pagination fix. Results in `backtest-results/`. |
 
 ## What Was Done (Session 1) — Drift→Hyperliquid pivot + full bot wiring
 
@@ -947,14 +951,37 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 
    **Known v1 simplifications:** close-only SL/TP detection uses bar high/low (not tick data); S3 TPs exit full position at highest TP reached in bar (not 33/33/34% partial closes); BBWP/PMARP use default TV params (may differ if chart settings differ).
 
+## What Was Done (Session 17) — Backtests page + pagination fix
+
+1. **Fixed Hyperliquid 429 rate limiting** — `src/backtest/collector.ts`: changed parallel TF fetching to sequential, added retry with backoff (5 attempts: 3s/8s/20s/40s/60s), 1.5s sleep between paginated pages, 3s gap between timeframes.
+2. **Fixed pagination bug (critical)** — The API anchors responses to `endTime` and returns the most-recent N bars, so forward pagination (`cursor = lastTs + 1`) always returned the same trailing ~5000 15m bars (~49 days) regardless of `--days`. Fixed by backwards pagination: `windowEnd = firstTs - 1` after each page. Both runs now cover their full requested window with distinct trade data.
+3. **`reporter.ts` — per-run file saving** — Results now saved to `backtest-results/{days}d-{YYYYMMDD}-{HHmmss}.json` (never overwritten). Legacy `backtest-results.json` still written for backward compat. Directory created at `TradingBot/backtest-results/`.
+4. **Frontend Backtests page** — `frontend/src/app/(app)/backtests/page.tsx`: SSR loader reads all JSON files from `backtest-results/` directory, sorts newest-first, passes to `BacktestTabs`. Auto-picks up new runs on page refresh — no code changes needed.
+5. **`BacktestTabs` component** — `frontend/src/components/backtest-tabs.tsx`: Client Component, one tab per run (label `{days}d · {date}`), config badges, 6 stat cards, strategy breakdown table, full trade log sorted newest-first.
+6. **Nav updated** — Desktop nav: "Backtests" link added. Mobile nav: "Strategy" tab replaced with "Backtest" (`FlaskConical` icon).
+7. **Backtest runs executed** — 90d (✅ 113 trades, S2 +$12.99, total -$5.93) and 365d (✅ correct full-window data, different trade count/distribution vs 90d) both saved to `backtest-results/`. Old broken runs from before the pagination fix also present as earlier tabs.
+
+## What Was Done (Session 18) — S3 overtrading fix, Supabase backtests, native close detection
+
+1. **S3 overtrading analysis** — Backtest data (90d, 102 S3 trades) analysed in depth: 29% win rate, -$11.92 PnL. All `stoch_rsi_reverse_cross` exits at ≤45min were losses (15 trades, -$3.75). `max_hold_time` exits had 87.5% win rate. tp2/tp3 never reached.
+2. **S3 entry filter: BBWP < 40** — `src/strategy/s3_stoch_rsi.ts`: added `S3_BBWP_MAX = 40` constant. Blocks S3 entries when 1H BBWP ≥ 40 (high-volatility = StochRSI crosses are noise). Exported for use in backtest engine.
+3. **S3 exit filter: 45min min hold** — `src/strategy/s3_stoch_rsi.ts`: added `S3_MIN_HOLD_MS = 45 * 60 * 1000`. Gates `stoch_rsi_reverse_cross` exit behind minimum hold time in both `shouldExitS3()` and backtest `checkExit()`.
+4. **Backtest validation** — 90d re-run: S3 trades 102→46 (-55%), total PnL -$5.93→-$0.84, max DD -2.6%→-1.7%, profit factor 0.86→0.97, Sharpe -0.89→-0.00. S1/S2 unchanged.
+5. **Backtest results in Supabase** — New `backtest_runs` table (30 columns: config, stats, per-strategy breakdown, trades jsonb, equity_curve jsonb). `saveToSupabase()` in `src/backtest/reporter.ts` writes each run. Migration script at `src/scripts/migrate_backtest_runs.ts`. RLS policy added: authenticated SELECT, service_role ALL.
+6. **Backtests page reads from Supabase** — `frontend/src/app/(app)/backtests/page.tsx` rewritten from local filesystem reads to Supabase queries. Works on Vercel production (`trade-kit.vercel.app/backtests`). 90d run seeded and visible.
+7. **Dashboard layout** — Manual Trade card moved from below Recent Ticks to right below the 4 stat cards for quicker access.
+8. **Native TP/SL close detection** — `reconcilePositions()` in `src/main.ts`: compares `activePositions[]` against live Hyperliquid positions each tick. When a position disappears, fetches real fill price from `getUserFills()` (new in `src/hyperliquid/account.ts`), computes actual PnL, calls `insertClosedTrade()`. Heuristic: profit = `native_tp`, loss = `native_sl`.
+9. **Manual trade position tracking** — `CommandHandlerContext.registerManualPosition()` callback added. `handleManualTrade` now pushes into `activePositions[]` after confirmed fill, so the reconciliation loop can detect native closes and log them.
+10. **3 commits pushed** — `191c1e5` (S3 fix + backtests page), `981b714` (Supabase storage + dashboard), `0155e74` (reconciliation + manual trade tracking).
+
 ## What To Do Next
 
-> **Next session plan (Session 17):** Run the backtesting engine for the first time and validate output.
+> **Next session plan (Session 19):** Restart bot with reconciliation code, verify manual trade logging end-to-end. First LIVE strategy trade still pending.
 >
-> 1. **Run first backtest** — `npx ts-node src/scripts/backtest.ts` and validate output makes sense (trade count, win rate, equity curve shape).
-> 2. **Wait for first LIVE strategy trade** — bearish macro persists. S3 short most likely first signal.
-> 3. **Frontend Backtests page** — read `backtest-results.json` via API route or store in Supabase `backtest_runs` table; display on `/backtests`.
-> 4. **Verify manual trade Supabase logging** — confirm the trade opened this session (or a future one) closes and appears in Trades page with `source: "manual"`.
+> 1. **Restart bot** — current running instance is pre-reconciliation. Restart to pick up commit `0155e74`.
+> 2. **Verify manual trade logging** — place a small manual trade from dashboard, let it hit TP or SL, confirm it appears in Trades page with `source: "manual"` and correct exit price from Hyperliquid fills API.
+> 3. **Wait for first LIVE strategy trade** — bearish macro persists (confluence 0/3). S3 short most likely first signal with the new BBWP<40 filter active.
+> 4. **Further S3 tuning** — S3 still net negative (-$6.88 over 46 trades). Consider: (a) trade cooldown after S3 exit, (b) tighter RSI range, (c) require 1H trend alignment beyond EMA21 proximity.
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
@@ -980,7 +1007,7 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 | 20 | ~~**Remove week-1 LIVE clamps**~~ | — | ✅ **Done Session 14.** Clamp block deleted from `src/main.ts`, `MAX_OPEN_POSITIONS` restored to 3 in `manager.ts`. Replaced with permanent per-strategy fixed leverage (S1=10x, S2=8x, S3=5x) and margin-based sizing (5% of bankroll). |
 | 21 | ~~**TradingView Desktop state loss on Windows sleep**~~ | — | ✅ **Resolved Session 15.** Windows configured to never sleep. |
 | 22 | ~~**Verify frontend `turbopack.root` fix landed**~~ | — | ✅ **Done Session 11 — the hard way.** Session 10's `next.config.ts` was actually broken (ESM/CJS interop, `ReferenceError: exports is not defined`). Session 11's first follow-up (`process.cwd()`) was ALSO broken — caused the Turbopack OOM crash-loop that froze the laptop and killed the LIVE bot for 3h. **Final fix:** switched to `next.config.js` (CJS) using `__dirname`, which matches the canonical Next docs example and works first-try. Verified end-to-end: `next build` clean, `next dev` ready in 1.17s, all 4 app routes respond correctly. See Session 11 writeup section 2 for the full incident postmortem. |
-| 23 | **Frontend Backtests page stub** | trivial | Only remaining piece of task #17. Reads `backtest_runs` — currently 0 rows. Adds `(app)/backtests/page.tsx` with a table that shows an empty state until a backtest engine exists. Zero-risk UI work, defer until backtest engine is built. |
+| 23 | ~~**Frontend Backtests page stub**~~ | — | ✅ **Done Session 17.** Full page built — tabbed, per-run, reads from `backtest-results/` directory. |
 | 24 | ~~**Frontend mobile nav**~~ | — | ✅ **Done Session 12.** Bottom tab bar with 5 icons, hidden on desktop, safe area padding. |
 | 25 | **Frontend command execution toast** | trivial | Current `KillSwitchButton` shows sonner toast on result but not on command submission. Quick UX polish: show "Kill command sent…" immediately, then replace with the result toast when the bot finishes. |
 | 26 | ~~**Real LIVE restart to exercise hydration path**~~ | — | ✅ **Done Session 12.** LIVE restart emitted `[Bot] Hydrated risk state from 2026-04-11T21:28:13` with correct values. |
@@ -991,8 +1018,14 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 | 31 | **Multi-asset support (ETH/SOL)** | high | User interested. Requires new TV charts + indicators, strategy params per asset, dynamic asset index in orders module, risk manager changes for concurrent cross-asset positions. Major architectural expansion. |
 | 32 | ~~**Test manual trade card end-to-end**~~ | — | ✅ **Done Session 16.** Real trade submitted from Vercel dashboard: BTC long (15x) opened, SL + 3 TP orders confirmed on Hyperliquid Open Orders. Command bus path fully exercised. |
 | 33 | ~~**Backtesting engine**~~ | — | ✅ **Done Session 16.** `src/backtest/*` + `src/scripts/backtest.ts`. Hyperliquid API data source, all 4 TFs, indicator computation, strategy replay with confluence scoring, fees. Typecheck clean. Not yet run end-to-end. |
-| 34 | **Run first backtest + validate output** | low | `npx ts-node src/scripts/backtest.ts`. Check trade count is non-zero, equity curve shape is plausible, no crash on data fetch. If 0 trades: check macro filter — bearish environment may suppress S1/S2 longs. |
-| 35 | **Frontend Backtests page** | low | Read `backtest-results.json` (or store in Supabase `backtest_runs`) and display on `/backtests`. Builds on task #23 stub. |
+| 34 | ~~**Run first backtest + validate output**~~ | — | ✅ **Done Session 17.** 90d + 365d both run, pagination bug found and fixed, results saved to `backtest-results/`. |
+| 35 | ~~**Frontend Backtests page**~~ | — | ✅ **Done Session 17.** Tabbed page at `/backtests`. Reads local `backtest-results/` directory. New runs appear on refresh automatically. |
+| 36 | ~~**Store backtest runs in Supabase `backtest_runs`**~~ | — | ✅ **Done Session 18.** `backtest_runs` table created, `saveToSupabase()` in reporter.ts, page reads from Supabase. |
+| 37 | ~~**Tune S3 entry filter**~~ | — | ✅ **Done Session 18.** BBWP<40 entry filter + 45min min hold exit. S3 trades 102→46, total PnL -$5.93→-$0.84, profit factor 0.86→0.97. |
+| 38 | ~~**Store backtest runs in Supabase**~~ | — | ✅ **Done Session 18.** `backtest_runs` table + `saveToSupabase()` in reporter. Vercel production reads from Supabase. |
+| 39 | **Verify manual trade Supabase logging** | low | Reconciliation code pushed but bot needs restart. Place a manual trade from dashboard, let it hit TP/SL, confirm it appears in Trades page. |
+| 40 | **Further S3 tuning** | med | S3 still net negative (-$6.88/46 trades). Options: trade cooldown, tighter RSI range, require 1H trend alignment. Backtest each before deploying. |
+| 41 | **Restart bot with Session 18 code** | low | Current running instance is pre-reconciliation commit `0155e74`. Restart to activate native TP/SL detection + manual trade tracking. |
 
 ## Untested Code Paths
 
@@ -1070,7 +1103,7 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 ## Background Processes (when you last left)
 
 - **TradingView Desktop** with CDP port 9222 — user relaunched mid-Session 11 after the OOM incident. Chart is `BINANCE:BTCUSDC` with 9 indicators loaded. Relaunch via `launch_tradingview.ps1` if needed.
-- **LIVE bot** — **RUNNING** — Session 14/15 code. Clean startup confirmed at start of Session 16. Killed state: `false`. Balance ~$499.47. **1 open position** (BTC long 15x, manual trade submitted from dashboard this session — SL 73,800 / TPs 75,800 / 77,850 / 80,500). Monitor on Hyperliquid dashboard.
+- **LIVE bot** — **RUNNING** — Session 18 code (S3 BBWP+min hold active, but pre-reconciliation). Killed state: `false`. Balance ~$500.26. No open positions. **Needs restart** to pick up commit `0155e74` (native TP/SL detection + manual trade tracking).
 - **DRY_RUN bot (Session 11)** — 💀 **DEAD.** Replaced by the Session 12 LIVE bot above.
 - **LIVE bot (Session 10)** — 💀 **DEAD.** Replaced during Session 11 recovery.
 - **tradingview-mcp** — spawned as a child by the active bot. Lives as long as the parent. Will die on Ctrl+C of the bot.
