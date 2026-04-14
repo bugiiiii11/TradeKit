@@ -13,7 +13,7 @@
 - **Strategy:** BTC perpetual futures, 3 strategies (S1/S2/S3), multi-timeframe confluence. Per-strategy fixed leverage (S1=10x, S2=8x, S3=5x), 5% margin-based sizing, S3 scaled TPs (1%/3%/5%). **Session 15: manual trade card on dashboard — place trades from browser via command bus.**
 - **GitHub:** `github.com/bugiiiii11/TradeKit` — 13 commits, auto-deploys to Vercel
 - **Vercel:** `trade-kit.vercel.app` — frontend dashboard (Next.js 16, Supabase auth). Sign-ups disabled — only existing account can log in.
-- **Last session:** 15 — 2026-04-14 — **Manual trade card (dashboard → command bus → Hyperliquid).**
+- **Last session:** 16 — 2026-04-14 — **Backtesting engine (Hyperliquid API + strategy replay).**
 
 ## Architecture
 
@@ -116,6 +116,13 @@ Hyperliquid mainnet
 | `frontend/src/app/actions/commands.ts` | Session 15 — Added `"manual_trade"` to `CommandType`, `result` field on `CommandActionResult` (read from `bot_commands.result` column after poll), `issueManualTrade()` wrapper. |
 | `frontend/src/components/manual-trade-card.tsx` | Session 15 — New Client Component. 2-col layout: Long/Short toggle, leverage, USD size, SL price on left; 1–3 TP levels (auto-split 100% / 50+50 / 50+25+25) + submit on right. Confirmation dialog before submit. Shows BTC ref price from latest market snapshot. |
 | `frontend/src/app/(app)/page.tsx` | Session 15 — `ManualTradeCard` added between main grid and bot logs. Passes `markPrice` from latest market snapshot. |
+| `src/backtest/types.ts` | Session 16 — Shared interfaces: `BarData`, `AlignedBar`, `OpenPosition`, `BacktestTrade`, `BacktestConfig`, `BacktestResult`, `BacktestStats`. |
+| `src/backtest/indicators.ts` | Session 16 — Pure indicator functions: `computeEMA`, `computeRSI`, `computeStochRSI`, `computeBBWP` (period=13, lookback=252), `computePMARP` (period=50, lookback=200). Match TV defaults. |
+| `src/backtest/collector.ts` | Session 16 — Fetches BTC OHLCV from Hyperliquid public API (`candleSnapshot`), paginates, computes all indicators, returns `BarData[]`. All 4 TFs fetched in parallel with per-TF warmup windows. |
+| `src/backtest/aligner.ts` | Session 16 — Binary-search alignment: for each 15m bar finds the most-recent 1H/4H/1D bar at or before its timestamp. Filters out warm-up bars (any NaN indicator). |
+| `src/backtest/engine.ts` | Session 16 — Replay loop. Calls `evaluateS1/S2/S3` + `scoreSignals` for entry detection (same logic as live bot, macro filter applied). Exit logic re-implemented inline to avoid module-state ordering issues. Tracks simulated position, computes PnL with 0.035% taker fees. One position at a time (v1). |
+| `src/backtest/reporter.ts` | Session 16 — Console output (per-strategy table + risk metrics + last 15 trades) + `backtest-results.json` save at project root. |
+| `src/scripts/backtest.ts` | Session 16 — CLI entry: `npx ts-node src/scripts/backtest.ts [--days 90] [--bankroll 500] [--margin 5]`. |
 
 ## Test Scripts
 
@@ -130,6 +137,7 @@ Hyperliquid mainnet
 | `src/scripts/test_stop_cleanup.ts` | Session 9 — validates `closePosition`'s auto-cleanup of resting reduce-only stops. Opens $20 long + stop + closePosition + asserts 0 BTC orders remain | ✅ PASS 2026-04-11 — net cost $0.0173. **Note:** `cancelOpenBtcStops` found 0 stops during the test — Hyperliquid's native behavior already removed the reduce-only trigger when the position closed. Our helper is now a defensive safety net. |
 | `src/scripts/test_risk_hydration.ts` | Session 11 — validates risk state hydration end-to-end. Part A: insert synthetic `risk_snapshots` row → `loadLatestRiskState()` → `hydrateState()` → assert 10 fields → delete synthetic row. Parts B-E: unit tests on `hydrateState()` for cross-day reset, expired pausedUntil clamp, future pausedUntil preserve, killed state preserve | ✅ PASS 2026-04-11 — 5/5 cases, zero pollution in `risk_snapshots` (test row cleaned up in finally block) |
 | `src/scripts/test_custom_trade.ts` | Session 13 — CLI manual trade with SL + scaled TPs. Args: `<direction> <leverage> <sl%> <tp_levels> <notional>`. Logs to Supabase with `source: "manual"`. | ✅ PASS 2026-04-13 — entry/SL/TP placement confirmed on Hyperliquid. Scaled TPs (3 levels) confirmed on Open Orders. Kill switch close validated. PowerShell gotcha: quote `"1,1.5,2"` or commas are parsed as array separators. |
+| `src/scripts/backtest.ts` | Session 16 — Replay S1/S2/S3 on historical Hyperliquid candle data. Args: `--days 90 --bankroll 500 --margin 5`. Prints stats table, saves `backtest-results.json`. | ⏳ NOT YET RUN — typecheck clean, first run pending |
 
 ## What Was Done (Session 1) — Drift→Hyperliquid pivot + full bot wiring
 
@@ -923,14 +931,30 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 
 4. **Backtesting scoped for next session** — agreed approach: use `data_get_study_values` arrays (all visible bars per indicator) from TradingView MCP as historical data source. Build `src/scripts/backtest.ts` engine + frontend page.
 
+## What Was Done (Session 16) — Backtesting engine (Hyperliquid API + strategy replay)
+
+1. **Manual trade card confirmed end-to-end** — user submitted a real trade from the Vercel dashboard. BTC long (15x) opened on Hyperliquid with SL < 73,800 and 3 TP orders (75,800 / 77,850 / 80,500) confirmed on Open Orders. Marks task #32 complete.
+
+2. **Backtesting engine built** — 7 new files, typecheck clean, committed `dd5542d` and pushed to GitHub. Data source changed from TradingView MCP (single-bar only) to **Hyperliquid public candle API** (months of OHLCV, no auth required).
+
+   **Architecture:**
+   - `src/backtest/collector.ts` — fetches BTC candles from `api.hyperliquid.xyz/info` (`candleSnapshot`), all 4 TFs in parallel, paginated, per-TF warmup (270 days extra for 1D indicators)
+   - `src/backtest/indicators.ts` — EMA (SMA-seeded), RSI (Wilder's), StochRSI, BBWP (period=13, lookback=252), PMARP (SMA-50, lookback=200)
+   - `src/backtest/aligner.ts` — binary-search alignment of 1H/4H/1D to each 15m bar
+   - `src/backtest/engine.ts` — replay loop: reuses `evaluateS1/S2/S3` + `scoreSignals` for entries (macro filter applied); exit logic re-implemented inline to avoid module-state ordering issues; 0.035% taker fee per side deducted; one position at a time (v1 simplification)
+   - `src/backtest/reporter.ts` — per-strategy table + risk metrics + last 15 trades; saves `backtest-results.json`
+   - `src/scripts/backtest.ts` — CLI with `--days`, `--bankroll`, `--margin` flags
+
+   **Known v1 simplifications:** close-only SL/TP detection uses bar high/low (not tick data); S3 TPs exit full position at highest TP reached in bar (not 33/33/34% partial closes); BBWP/PMARP use default TV params (may differ if chart settings differ).
+
 ## What To Do Next
 
-> **Next session plan (Session 16):** Manual trade card deployed to Vercel. Main priorities:
+> **Next session plan (Session 17):** Run the backtesting engine for the first time and validate output.
 >
-> 1. **Test manual trade card end-to-end** — open dashboard, fill form (small size), submit, verify order on Hyperliquid + SL/TP on Open Orders + command row in Automation page.
+> 1. **Run first backtest** — `npx ts-node src/scripts/backtest.ts` and validate output makes sense (trade count, win rate, equity curve shape).
 > 2. **Wait for first LIVE strategy trade** — bearish macro persists. S3 short most likely first signal.
-> 3. **Verify S3 TP placement** — after first S3 entry, confirm 3 TP orders appear on Hyperliquid Open Orders.
-> 4. **Backtesting engine** — `src/scripts/backtest.ts` using TradingView MCP historical bar data + frontend page.
+> 3. **Frontend Backtests page** — read `backtest-results.json` via API route or store in Supabase `backtest_runs` table; display on `/backtests`.
+> 4. **Verify manual trade Supabase logging** — confirm the trade opened this session (or a future one) closes and appears in Trades page with `source: "manual"`.
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
@@ -965,8 +989,10 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 | 29 | **Verify manual trade Supabase logging** | low | `test_custom_trade.ts` logs to `trades` table with `source: "manual"`, but no trade has completed end-to-end yet (all were killed early or script restarted). Run one trade to SL/TP completion and confirm it appears on the Trades page. |
 | 30 | ~~**Wire take-profits into bot strategies**~~ | — | ✅ **Done Session 14 (S3).** S3 now places 3 native TP orders at entry: 33%@+1%, 33%@+3%, 34%@+5%. S1 and S2 keep indicator-based exits by design (trend-ride / PMARP-BBWP). |
 | 31 | **Multi-asset support (ETH/SOL)** | high | User interested. Requires new TV charts + indicators, strategy params per asset, dynamic asset index in orders module, risk manager changes for concurrent cross-asset positions. Major architectural expansion. |
-| 32 | **Test manual trade card end-to-end** | med | UI confirmed rendering correctly on dashboard (screenshot verified Session 15). Still need to submit a real trade: verify order on Hyperliquid, SL + TP on Open Orders, `bot_commands` row status=done, toast success. Use small size ($20–30). |
-| 33 | **Backtesting engine** | med | Use TradingView MCP `data_get_study_values` arrays (all visible bars per indicator) as historical data. Build `src/scripts/backtest.ts` + frontend backtests page. Scope: 15m chart, zoom out ~500 bars, replay S1/S2/S3 logic bar-by-bar, output equity curve + per-trade stats. |
+| 32 | ~~**Test manual trade card end-to-end**~~ | — | ✅ **Done Session 16.** Real trade submitted from Vercel dashboard: BTC long (15x) opened, SL + 3 TP orders confirmed on Hyperliquid Open Orders. Command bus path fully exercised. |
+| 33 | ~~**Backtesting engine**~~ | — | ✅ **Done Session 16.** `src/backtest/*` + `src/scripts/backtest.ts`. Hyperliquid API data source, all 4 TFs, indicator computation, strategy replay with confluence scoring, fees. Typecheck clean. Not yet run end-to-end. |
+| 34 | **Run first backtest + validate output** | low | `npx ts-node src/scripts/backtest.ts`. Check trade count is non-zero, equity curve shape is plausible, no crash on data fetch. If 0 trades: check macro filter — bearish environment may suppress S1/S2 longs. |
+| 35 | **Frontend Backtests page** | low | Read `backtest-results.json` (or store in Supabase `backtest_runs`) and display on `/backtests`. Builds on task #23 stub. |
 
 ## Untested Code Paths
 
@@ -1014,6 +1040,9 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 | **`insertClosedTrade` with `source: "manual"` (Session 13)** | Test trades were all closed via kill switch or Ctrl+C before the Supabase write executed | The Supabase insert with the new `source` column hasn't been confirmed end-to-end yet |
 | **Isolated margin liquidation price (Session 13)** | Switched from cross to isolated; no position has gotten close to liquidation | Isolated liquidation price is much closer than cross — verify it's visible on dashboard and that risk manager accounts for it |
 | **Kill switch's `clearActivePositions` callback (Session 8)** | Never had non-empty `activePositions[]` during testing | Bug in the callback wiring could leave stale in-memory tracking after a LIVE kill |
+| **Backtest engine first run (Session 16)** | `src/scripts/backtest.ts` written + typecheck clean but not yet executed | API fetch could fail, alignment could produce 0 bars, or PnL math could be wrong — validate output before trusting numbers |
+| **Hyperliquid candle API pagination (Session 16)** | Implemented pagination loop but never triggered (< 5000 candles per request for 4H/1D/1H) | 15m fetch for long windows (>90 days) will paginate; if the API returns an unexpected shape the loop could hang or produce gaps |
+| **Backtest S2 BBWP/PMARP accuracy (Session 16)** | BBWP uses period=13 stdDev=1 lookback=252; PMARP uses SMA-50 lookback=200. These are TV defaults but user's chart settings are unconfirmed. | S2 signal count may differ from live bot — validate by comparing BBWP/PMARP values from `discover_tradingview.ts` output vs computed values at same timestamp |
 
 ## Risk Configuration
 
@@ -1041,7 +1070,7 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
 ## Background Processes (when you last left)
 
 - **TradingView Desktop** with CDP port 9222 — user relaunched mid-Session 11 after the OOM incident. Chart is `BINANCE:BTCUSDC` with 9 indicators loaded. Relaunch via `launch_tradingview.ps1` if needed.
-- **LIVE bot** — ⚠️ **RUNNING but stale** — still running Session 13 code. **Must restart** to pick up Session 14 changes (new sizing, leverage, S3 TPs). Ctrl+C → `$env:DRY_RUN="false"; npm start`. Killed state: `false`. Balance ~$499.82. 0 positions, 0 orders.
+- **LIVE bot** — **RUNNING** — Session 14/15 code. Clean startup confirmed at start of Session 16. Killed state: `false`. Balance ~$499.47. **1 open position** (BTC long 15x, manual trade submitted from dashboard this session — SL 73,800 / TPs 75,800 / 77,850 / 80,500). Monitor on Hyperliquid dashboard.
 - **DRY_RUN bot (Session 11)** — 💀 **DEAD.** Replaced by the Session 12 LIVE bot above.
 - **LIVE bot (Session 10)** — 💀 **DEAD.** Replaced during Session 11 recovery.
 - **tradingview-mcp** — spawned as a child by the active bot. Lives as long as the parent. Will die on Ctrl+C of the bot.
