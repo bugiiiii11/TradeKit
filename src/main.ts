@@ -30,7 +30,7 @@ import {
   hydrateState,
 } from "./risk/state";
 import { placeMarketOrder, placeLimitOrder, closePosition, setStopLoss, setScaledTakeProfits } from "./hyperliquid/orders";
-import { getBalance, getOpenPositions, getFundingRate } from "./hyperliquid/account";
+import { getBalance, getOpenPositions, getFundingRate, getUserFills } from "./hyperliquid/account";
 import { logTradeOpen, logTradeClose } from "./logger/trade_logger";
 import {
   writeMarketSnapshot,
@@ -120,12 +120,17 @@ async function runLoop(mcpClient: MCPClient): Promise<void> {
     // 2b. Mirror Hyperliquid open positions into public.positions. Non-fatal.
     // Always runs — even killed, we still want the dashboard to reflect the
     // actual post-kill account state.
+    let livePositions: import("./hyperliquid/account").PositionInfo[] = [];
     try {
-      const openPositions = await getOpenPositions();
-      await syncPositions(openPositions, { BTC: snap15m.close });
+      livePositions = await getOpenPositions();
+      await syncPositions(livePositions, { BTC: snap15m.close });
     } catch (err) {
       console.warn("[Bot] syncPositions failed:", err);
     }
+
+    // 2c. Reconcile activePositions against live Hyperliquid state.
+    // Detects native TP/SL closes and logs them to the trades table.
+    await reconcilePositions(livePositions);
 
     // 3. Check exits on active positions — SKIPPED when killed. Kill switch
     // already closed everything; strategy exit logic must not re-engage.
@@ -343,6 +348,108 @@ async function runLoop(mcpClient: MCPClient): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Position reconciliation — detect native TP/SL closes
+// ---------------------------------------------------------------------------
+
+async function reconcilePositions(
+  livePositions: import("./hyperliquid/account").PositionInfo[]
+): Promise<void> {
+  if (activePositions.length === 0) return;
+
+  const liveBtcDirs = new Set(
+    livePositions
+      .filter((p) => p.coin === "BTC" && p.sizeBase > 0)
+      .map((p) => p.direction)
+  );
+
+  for (let i = activePositions.length - 1; i >= 0; i--) {
+    const pos = activePositions[i];
+
+    // If the position still exists on Hyperliquid, skip
+    if (liveBtcDirs.has(pos.direction)) continue;
+
+    // Position disappeared — it was closed natively (TP or SL on Hyperliquid)
+    console.log(
+      `[Bot] Detected native close for ${pos.strategy ?? "manual"} ${pos.direction} ` +
+        `(entry $${pos.entryPrice.toFixed(0)}) — fetching fills...`
+    );
+
+    try {
+      const entryMs = new Date(pos.entryTimestamp).getTime();
+      const fills = await getUserFills(entryMs);
+
+      // Find closing fills: for a long, closing fill is a sell (A);
+      // for a short, closing fill is a buy (B).
+      const closingSide = pos.direction === "long" ? "A" : "B";
+      const closingFills = fills
+        .filter((f) => f.side === closingSide && f.time >= entryMs)
+        .sort((a, b) => b.time - a.time); // newest first
+
+      let exitPrice: number;
+      let exitTime: string;
+      let closedPnl: number;
+      let exitReason: string;
+
+      if (closingFills.length > 0) {
+        // Use weighted avg price across all closing fills
+        const totalSize = closingFills.reduce((s, f) => s + f.size, 0);
+        exitPrice = closingFills.reduce((s, f) => s + f.price * f.size, 0) / totalSize;
+        exitTime = new Date(closingFills[0].time).toISOString();
+        closedPnl = closingFills.reduce((s, f) => s + f.closedPnl, 0);
+
+        // Heuristic: profitable close = TP, loss = SL
+        exitReason = closedPnl >= 0 ? "native_tp" : "native_sl";
+      } else {
+        // No fills found — use entry price as fallback (shouldn't happen)
+        console.warn("[Bot] No closing fills found — using fallback exit price");
+        exitPrice = pos.entryPrice;
+        exitTime = new Date().toISOString();
+        closedPnl = 0;
+        exitReason = "native_close_unknown";
+      }
+
+      const pnlUsd =
+        pos.direction === "long"
+          ? (exitPrice - pos.entryPrice) * pos.sizeBase
+          : (pos.entryPrice - exitPrice) * pos.sizeBase;
+
+      recordTradeResult(pnlUsd, pos.marginUsd);
+
+      // Determine source: manual trades have strategy "manual"
+      const source = pos.strategy === "S1" || pos.strategy === "S2" || pos.strategy === "S3"
+        ? "bot" as const
+        : "manual" as const;
+
+      await insertClosedTrade({
+        strategy: pos.strategy ?? "S3",
+        direction: pos.direction,
+        symbol: "BTC",
+        size: pos.sizeBase,
+        entryPrice: pos.entryPrice,
+        exitPrice,
+        entryTime: pos.entryTimestamp,
+        exitTime,
+        pnlUsd,
+        riskDollar: pos.riskDollar ?? pos.marginUsd,
+        leverage: pos.leverage,
+        confluenceScore: pos.confluenceScore ?? 0,
+        stopDistancePct: pos.stopDistancePct,
+        exitReason,
+        source,
+      });
+
+      activePositions.splice(i, 1);
+      console.log(
+        `[Bot] Native close logged: ${pos.direction} exit @ $${exitPrice.toFixed(0)}, ` +
+          `PnL: $${pnlUsd.toFixed(2)}, reason: ${exitReason}`
+      );
+    } catch (err) {
+      console.error("[Bot] Reconciliation error:", err);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Exit checker
 // ---------------------------------------------------------------------------
 
@@ -462,6 +569,25 @@ async function main(): Promise<void> {
   await startCommandSubscription({
     clearActivePositions: () => {
       activePositions.length = 0;
+    },
+    registerManualPosition: (pos) => {
+      activePositions.push({
+        strategy: "S3", // manual trades use S3-like exit logic (if any)
+        direction: pos.direction,
+        entryPrice: pos.entryPrice,
+        entryTimestamp: pos.entryTimestamp,
+        sizeBase: pos.sizeBase,
+        stopPrice: pos.stopPrice,
+        marginUsd: pos.marginUsd,
+        riskDollar: pos.marginUsd, // margin = risk for manual trades
+        leverage: pos.leverage,
+        confluenceScore: 0,
+        stopDistancePct: pos.stopDistancePct,
+      });
+      console.log(
+        `[Bot] Manual ${pos.direction} registered — entry $${pos.entryPrice.toFixed(0)}, ` +
+          `SL $${pos.stopPrice.toFixed(0)}, ${pos.leverage}x`
+      );
     },
   });
 

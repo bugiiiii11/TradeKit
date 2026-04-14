@@ -61,3 +61,47 @@ export async function getFundingRate(): Promise<number> {
   const btcCtx = ctxs[ctx.btcAssetIndex];
   return parseFloat(btcCtx.funding);
 }
+
+// ---------------------------------------------------------------------------
+// User fills — for detecting native TP/SL closes
+// ---------------------------------------------------------------------------
+
+export interface FillInfo {
+  coin: string;
+  side: "B" | "A"; // B = buy, A = sell (ask)
+  price: number;
+  size: number;
+  time: number; // epoch ms
+  closedPnl: number;
+  fee: number;
+  oid: number;
+}
+
+/**
+ * Returns recent BTC fills for the master account within a time window.
+ * Used by the reconciliation loop to find the actual exit price when a
+ * native TP/SL fires on Hyperliquid.
+ *
+ * @param sinceMs - Epoch ms to start from (default: last 4 hours)
+ */
+export async function getUserFills(sinceMs?: number): Promise<FillInfo[]> {
+  const ctx = await getHyperliquidContext();
+  const startTime = sinceMs ?? Date.now() - 4 * 60 * 60 * 1000;
+  const response = await ctx.info.userFillsByTime({
+    user: ctx.masterAddress,
+    startTime,
+  });
+
+  return (response as unknown as Array<Record<string, unknown>>)
+    .filter((f) => f.coin === "BTC")
+    .map((f) => ({
+      coin:     f.coin as string,
+      side:     f.side as "B" | "A",
+      price:    parseFloat(f.px as string),
+      size:     parseFloat(f.sz as string),
+      time:     f.time as number,
+      closedPnl: parseFloat(f.closedPnl as string),
+      fee:      parseFloat(f.fee as string),
+      oid:      f.oid as number,
+    }));
+}

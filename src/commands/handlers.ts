@@ -22,6 +22,18 @@ const DRY_RUN = (process.env.DRY_RUN ?? "false").toLowerCase() === "true";
  * Context passed in by the subscription so handlers can mutate bot-level
  * state without importing from `main.ts` (would create a circular dep).
  */
+/** Minimal position info needed to register a manual trade for tracking. */
+export interface ManualPositionInfo {
+  direction: "long" | "short";
+  entryPrice: number;
+  entryTimestamp: string;
+  sizeBase: number;
+  stopPrice: number;
+  marginUsd: number;
+  leverage: number;
+  stopDistancePct: number;
+}
+
 export interface CommandHandlerContext {
   /**
    * Clears the bot's in-memory `activePositions[]` tracking. Called after a
@@ -29,6 +41,12 @@ export interface CommandHandlerContext {
    * positions that were just closed.
    */
   clearActivePositions: () => void;
+  /**
+   * Registers a manual trade into the bot's activePositions[] so the
+   * reconciliation loop can detect when it closes via native TP/SL and
+   * log it to the trades table.
+   */
+  registerManualPosition: (pos: ManualPositionInfo) => void;
 }
 
 export type CommandResult =
@@ -182,7 +200,7 @@ export interface ManualTradePayload {
 
 export async function handleManualTrade(
   payload: unknown,
-  _ctx: CommandHandlerContext
+  cmdCtx: CommandHandlerContext
 ): Promise<CommandResult> {
   if (typeof payload !== "object" || !payload) {
     return { ok: false, error: "Invalid payload: expected object" };
@@ -322,6 +340,21 @@ export async function handleManualTrade(
         `[Commands] TP${i + 1}: ${(portion * 100).toFixed(0)}% (${tpSize} BTC) @ $${tpPrice} | oid: ${tpOid}`
       );
     }
+
+    // Register in activePositions so the reconciliation loop can detect
+    // native TP/SL closes and log them to the trades table.
+    const stopDistPct = Math.abs(slPrice - entryPrice) / entryPrice;
+    cmdCtx.registerManualPosition({
+      direction,
+      entryPrice,
+      entryTimestamp: new Date().toISOString(),
+      sizeBase,
+      stopPrice: slPrice,
+      marginUsd: notionalUsd / leverage,
+      leverage,
+      stopDistancePct: stopDistPct,
+    });
+    console.log(`[Commands] Registered manual ${direction} in activePositions for reconciliation`);
 
     return {
       ok: true,
