@@ -3,23 +3,18 @@
  *
  * Enforces all portfolio-level limits from the strategy KB:
  *
- *   Max concurrent open positions: 1  (TEMP week-1 cap; KB default 3)
+ *   Max concurrent open positions: 3
  *   Max total portfolio exposure:  60% of bankroll at risk
  *   Daily drawdown limit:          10% → pause 24h
  *   Weekly drawdown limit:         15% → pause 48h
  *   Consecutive loss limit:         3  → pause 4h, review
- *
- * NOTE: MAX_OPEN_POSITIONS is tightened from KB default (3) to 1 for the
- * first week of LIVE trading. Relax back to 3 after the LIVE transition
- * is proven safe. See handoff task #9 and the related leverage/risk
- * clamps in src/main.ts.
  */
 
 import { getState, triggerPause } from "./state";
 import { SizingResult } from "./sizing";
 
 // TEMP week-1 LIVE cap — was 3 per KB. Restore after first week of LIVE.
-const MAX_OPEN_POSITIONS = 1;
+const MAX_OPEN_POSITIONS = 3;
 const MAX_EXPOSURE_PCT = 0.60;
 const DAILY_DRAWDOWN_LIMIT = 0.10;
 const WEEKLY_DRAWDOWN_LIMIT = 0.15;

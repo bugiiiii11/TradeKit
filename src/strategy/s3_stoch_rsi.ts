@@ -118,14 +118,8 @@ export function shouldExitS3(
     return { exit: true, reason: "stoch_rsi_reverse_cross" };
   }
 
-  // Profit target: 0.5–1.5% (use 1% as default take-profit)
-  const priceMoveTarget = 0.01;
-  if (positionDirection === "long" && close >= entryPrice * (1 + priceMoveTarget)) {
-    return { exit: true, reason: "profit_target" };
-  }
-  if (positionDirection === "short" && close <= entryPrice * (1 - priceMoveTarget)) {
-    return { exit: true, reason: "profit_target" };
-  }
+  // Note: take-profit is handled by native Hyperliquid TP orders (1%/3%/5%),
+  // placed at entry time by main.ts. No soft TP check needed here.
 
   // 2-hour max hold
   const entryMs = new Date(entryTimestamp).getTime();

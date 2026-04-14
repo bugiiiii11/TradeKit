@@ -1,11 +1,11 @@
 # BTC Trading Bot — Strategy Knowledge Base
 
-> **Version**: 1.0  
-> **Last updated**: 2026-04-09  
+> **Version**: 1.1
+> **Last updated**: 2026-04-14
 > **Asset**: BTC/USDC perpetual futures
 > **Exchange**: Hyperliquid (own L1)
 > **Starting bankroll**: $500
-> **Leverage range**: 2x–5x (initial — tighter limits while bot is unproven)
+> **Leverage**: S1=10x, S2=8x, S3=5x (fixed per strategy)
 
 ---
 
@@ -91,8 +91,9 @@ This strategy catches major trend moves and lets winners ride until the trend re
 - This strategy generates few signals but catches large moves
 - Historical win rate: approximately 85% (11/13 signals profitable since 2023 per Krown's tracking)
 - Average hold time: days to weeks
-- Default leverage: 5x (high-conviction trend signal)
+- Default leverage: 10x (fixed — see sizing rules)
 - Do NOT exit early on minor pullbacks — the exit is the reverse EMA cross
+- No take-profit orders — indicator-based exit only
 
 ---
 
@@ -129,8 +130,9 @@ Catches bounces off key moving averages during low-volatility consolidation peri
 ### Notes
 - Win rate: approximately 50–60% with favorable risk/reward (avg win 1.8%, avg loss 0.55%)
 - Works best in ranging/consolidating markets where S1 gives no signals
-- Default leverage: 3x–5x
+- Default leverage: 8x (fixed — see sizing rules)
 - Requires patience — wait for ALL conditions, do not force entries
+- No take-profit orders — indicator-based exit only (PMARP/BBWP/EMA cross)
 
 ---
 
@@ -158,14 +160,14 @@ Catches quick momentum reversals at overbought/oversold extremes.
 
 #### Exit conditions (ANY triggers exit):
 - Stoch RSI %K crosses back in the opposite direction
-- Quick profit target: 0.5%–1.5% price move (scalp — take profits fast)
+- **Take-profit orders (native)**: 33% at +1%, 33% at +3%, 34% at +5% from entry
 - Stop-loss: 0.3%–0.5% (tight stops for scalps)
 - 2-hour maximum hold time — if not profitable, close at market
 
 ### Notes
 - Highest frequency strategy — multiple signals per day
 - Lower win rate individually but high volume compensates
-- Default leverage: 3x (small positions, many trades)
+- Default leverage: 5x (fixed — see sizing rules)
 - NEVER hold overnight on this strategy
 - Skip signals that contradict S1's active trend direction
 
@@ -173,34 +175,40 @@ Catches quick momentum reversals at overbought/oversold extremes.
 
 ## Risk management rules
 
-### Per-trade risk
+### Per-trade sizing
+
+All trades allocate **5% of current bankroll as margin**, then lever up per strategy.
 
 | Parameter | Value |
 |-----------|-------|
-| Max risk per trade | 5% of bankroll ($25 at start) |
-| Default risk per trade | 2% of bankroll ($10 at start) |
-| High-conviction risk | 5% (when 2+ strategies agree) |
+| Margin per trade | 5% of current bankroll |
+| Example at $500 bankroll | $25 margin |
 
 ### Position sizing formula
 
 ```
-position_size = (bankroll × risk_percent) / (entry_price × stop_loss_distance%)
-effective_position = position_size × leverage
+margin_usd   = bankroll × 0.05
+position_usd = margin_usd × leverage
+position_btc = position_usd / entry_price
+risk_dollar  = position_usd × stop_distance_pct  (used for pnl_R tracking)
 ```
 
-Example: $500 bankroll, 3% risk ($15), 1% stop-loss distance, 5x leverage:
-- Base position = $15 / 1% = $1,500
-- With 5x leverage: need $300 margin
+Example: $500 bankroll, S1 signal, 10x leverage, 3% stop:
+- Margin = $25
+- Notional = $250
+- At risk if stop hit = $7.50
 
-### Leverage rules
+### Leverage rules (fixed per strategy)
 
-| Condition | Leverage |
-|-----------|----------|
-| Single strategy signal (S2 or S3 alone) | 3x |
-| S1 trend signal (high conviction) | 5x |
-| Multiple strategies confirm same direction | 5x–7x |
-| All 3 strategies align + macro trend confirmation | 7x–10x |
-| Conflicting signals between strategies | NO TRADE |
+| Strategy | Leverage | Style |
+|----------|----------|-------|
+| S1 — EMA Trend Cross | 10x | Trend-follow swing |
+| S2 — RSI + EMA Mean Reversion | 8x | Mean-reversion bounce |
+| S3 — Stoch RSI Scalp | 5x | Momentum scalp |
+| Conflicting signals between strategies | NO TRADE | — |
+
+When multiple strategies fire simultaneously, leverage is determined by the
+highest-priority strategy present (S1 > S2 > S3).
 
 ### Portfolio-level limits
 
@@ -228,12 +236,12 @@ When multiple strategies fire simultaneously, score the signal:
 
 | Confluence | Score | Action |
 |------------|-------|--------|
-| S1 long + S2 long entry | 8/10 | Enter with 5x–7x leverage |
-| S1 active long + S3 long | 6/10 | Enter S3 with 5x leverage |
-| S2 entry + S3 confirms | 5/10 | Enter with 3x–5x leverage |
-| Single strategy only | 3/10 | Enter with 3x leverage |
-| S1 long but S3 shows short | 1/10 | Skip or follow S1 only |
-| All 3 bearish simultaneously | 9/10 | Strong short, 7x–10x |
+| S1 long + S2 long entry | 8/10 | Enter at S1 leverage (10x) |
+| S1 active long + S3 long | 6/10 | Enter at S1 leverage (10x) |
+| S2 entry + S3 confirms | 5/10 | Enter at S2 leverage (8x) |
+| Single strategy only | 3/10 | Enter at that strategy's leverage |
+| S1 long but S3 shows short | 1/10 | Skip (conflicting signals) |
+| All 3 bearish simultaneously | 9/10 | Enter at S1 leverage (10x) |
 
 ### Macro filter
 

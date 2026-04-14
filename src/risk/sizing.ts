@@ -53,3 +53,36 @@ export function calcPositionSize(
 
   return { positionUsd, marginUsd, riskDollar, positionBase };
 }
+
+/**
+ * Margin-based position sizing.
+ *
+ * Allocates a fixed % of bankroll as margin, then levers it up.
+ * Example: $500 bankroll, 5% margin, 10x leverage
+ *   marginUsd   = $500 × 0.05 = $25
+ *   positionUsd = $25 × 10    = $250
+ *   riskDollar  = $250 × stopDistPct (actual $ at risk if stop triggers)
+ *
+ * @param bankroll    Current portfolio value in USD
+ * @param marginPct   Fraction of bankroll to use as margin (e.g. 0.05 = 5%)
+ * @param entryPrice  BTC entry price in USD
+ * @param stopDistPct Stop-loss distance as a decimal (e.g. 0.03 = 3%)
+ * @param leverage    Leverage multiplier (e.g. 10)
+ */
+export function calcMarginBasedSize(
+  bankroll: number,
+  marginPct: number,
+  entryPrice: number,
+  stopDistPct: number,
+  leverage: number
+): SizingResult {
+  if (stopDistPct <= 0) throw new Error("stopDistPct must be > 0");
+  if (leverage <= 0) throw new Error("leverage must be > 0");
+
+  const marginUsd = bankroll * marginPct;
+  const positionUsd = marginUsd * leverage;
+  const riskDollar = positionUsd * stopDistPct;
+  const positionBase = positionUsd / entryPrice;
+
+  return { positionUsd, marginUsd, riskDollar, positionBase };
+}

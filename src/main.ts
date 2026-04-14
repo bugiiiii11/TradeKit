@@ -19,8 +19,8 @@ import { fetchAllSnapshots, MCPClient } from "./tradingview/reader";
 import { evaluateS1, shouldExitS1 } from "./strategy/s1_ema_trend";
 import { evaluateS2, shouldExitS2 } from "./strategy/s2_mean_reversion";
 import { evaluateS3, shouldExitS3 } from "./strategy/s3_stoch_rsi";
-import { scoreSignals } from "./strategy/confluence";
-import { calcPositionSize } from "./risk/sizing";
+import { scoreSignals, getLeverageForSignals } from "./strategy/confluence";
+import { calcMarginBasedSize } from "./risk/sizing";
 import { canTrade } from "./risk/manager";
 import {
   setBankroll,
@@ -29,7 +29,7 @@ import {
   getState,
   hydrateState,
 } from "./risk/state";
-import { placeMarketOrder, placeLimitOrder, closePosition, setStopLoss } from "./hyperliquid/orders";
+import { placeMarketOrder, placeLimitOrder, closePosition, setStopLoss, setScaledTakeProfits } from "./hyperliquid/orders";
 import { getBalance, getOpenPositions, getFundingRate } from "./hyperliquid/account";
 import { logTradeOpen, logTradeClose } from "./logger/trade_logger";
 import {
@@ -166,25 +166,9 @@ async function runLoop(mcpClient: MCPClient): Promise<void> {
     // 6. Score confluence (scoreSignals handles empty signals — returns zeros).
     const confluence = scoreSignals(signals, snap1D);
 
-    // TEMP week-1 LIVE risk caps — clamp the scorer's leverage and risk outputs.
-    // KB defaults are 3-10x leverage and 2-5% risk; for the first week of LIVE
-    // trading we cap at 2x and 1% to limit blast radius while the system is
-    // proven under real capital. Remove this block (plus MAX_OPEN_POSITIONS in
-    // src/risk/manager.ts) after the first LIVE week. See handoff task #9.
-    const WEEK1_MAX_LEVERAGE = 2;
-    const WEEK1_MAX_RISK_PCT = 0.01;
-    if (confluence.leverage > WEEK1_MAX_LEVERAGE) {
-      console.log(
-        `[Bot] Week-1 cap: clamping leverage ${confluence.leverage}x → ${WEEK1_MAX_LEVERAGE}x`
-      );
-      confluence.leverage = WEEK1_MAX_LEVERAGE;
-    }
-    if (confluence.riskPercent > WEEK1_MAX_RISK_PCT) {
-      const pctOld = (confluence.riskPercent * 100).toFixed(1);
-      const pctNew = (WEEK1_MAX_RISK_PCT * 100).toFixed(1);
-      console.log(`[Bot] Week-1 cap: clamping risk ${pctOld}% → ${pctNew}%`);
-      confluence.riskPercent = WEEK1_MAX_RISK_PCT;
-    }
+    // Per-strategy fixed leverage (S1=10x, S2=8x, S3=5x).
+    // Overrides the confluence scorer's leverage output.
+    const tradeLeverage = getLeverageForSignals(signals);
 
     // 7. Write per-tick snapshots to Supabase. Placed BEFORE any early return so
     //    every tick produces a row in both tables. No-ops if env vars missing.
@@ -214,7 +198,7 @@ async function runLoop(mcpClient: MCPClient): Promise<void> {
     }
 
     console.log(`[Bot] Signals: ${signals.map((s) => `${s.strategy}:${s.direction}`).join(", ")}`);
-    console.log(`[Bot] Confluence: score=${confluence.score}, direction=${confluence.direction}, leverage=${confluence.leverage}x`);
+    console.log(`[Bot] Confluence: score=${confluence.score}, direction=${confluence.direction}`);
 
     if (!confluence.direction || confluence.leverage === 0) {
       console.log("[Bot] Confluence: no trade (conflicting or filtered signals).");
@@ -226,16 +210,24 @@ async function runLoop(mcpClient: MCPClient): Promise<void> {
                           signals.find((s) => s.strategy === "S2") ??
                           signals[0];
 
+    console.log(`[Bot] Strategy: ${primarySignal.strategy} @ ${tradeLeverage}x leverage`);
+
     const entryPrice = snap15m.close;
-    const sizing = calcPositionSize(
+    // Margin-based sizing: always 5% of bankroll as margin, levered up per strategy.
+    const MARGIN_PCT = 0.05;
+    const sizing = calcMarginBasedSize(
       balance,
-      confluence.riskPercent,
+      MARGIN_PCT,
       entryPrice,
       primarySignal.stopDistancePct,
-      confluence.leverage
+      tradeLeverage
     );
 
-    console.log(`[Bot] Sizing: $${sizing.positionUsd.toFixed(2)} notional, $${sizing.marginUsd.toFixed(2)} margin, risk $${sizing.riskDollar.toFixed(2)}`);
+    console.log(
+      `[Bot] Sizing: $${sizing.positionUsd.toFixed(2)} notional, ` +
+      `$${sizing.marginUsd.toFixed(2)} margin (${(MARGIN_PCT * 100).toFixed(0)}% of bankroll), ` +
+      `${tradeLeverage}x leverage, risk $${sizing.riskDollar.toFixed(2)}`
+    );
 
     // 10. Risk manager gate
     const permission = canTrade(sizing);
@@ -255,9 +247,9 @@ async function runLoop(mcpClient: MCPClient): Promise<void> {
       txSig = "DRY_RUN";
       console.log(
         `[DRY_RUN] Would ${primarySignal.strategy === "S2" ? "LIMIT" : "MARKET"} ` +
-          `${confluence.direction.toUpperCase()} ${sizing.positionBase} BTC ` +
+          `${confluence.direction.toUpperCase()} ${sizing.positionBase.toFixed(6)} BTC ` +
           `@ $${entryPrice.toFixed(2)} stop=$${stopPrice.toFixed(2)} ` +
-          `${confluence.leverage}x`
+          `${tradeLeverage}x`
       );
     } else if (primarySignal.strategy === "S2") {
       // S2: limit order at EMA55
@@ -266,20 +258,49 @@ async function runLoop(mcpClient: MCPClient): Promise<void> {
         confluence.direction,
         sizing.positionBase,
         limitPrice,
-        confluence.leverage
+        tradeLeverage
       );
     } else {
       // S1 and S3: market order
       txSig = await placeMarketOrder(
         confluence.direction,
         sizing.positionBase,
-        confluence.leverage
+        tradeLeverage
       );
     }
 
     // 12. Place stop-loss (skipped in dry-run)
     if (!DRY_RUN) {
       await setStopLoss(confluence.direction, stopPrice, sizing.positionBase);
+    }
+
+    // 12b. Place take-profit orders (S3 only: scaled at 1% / 3% / 5%).
+    // S1 and S2 use indicator-based exits (reverse EMA cross / PMARP / BBWP).
+    // TPs are native Hyperliquid trigger orders — they fire in real-time,
+    // not at the next loop tick. Skipped in dry-run.
+    let tpPrices: number[] = [];
+    if (primarySignal.strategy === "S3") {
+      // S3 scaled TPs: 33% at +1%, 33% at +3%, 34% at +5%
+      const tpTargets = [
+        { pct: 0.01, portion: 0.33 },
+        { pct: 0.03, portion: 0.33 },
+        { pct: 0.05, portion: 0.34 },
+      ];
+      tpPrices = tpTargets.map(({ pct }) =>
+        confluence.direction === "long"
+          ? entryPrice * (1 + pct)
+          : entryPrice * (1 - pct)
+      );
+      if (!DRY_RUN) {
+        await setScaledTakeProfits(confluence.direction, entryPrice, sizing.positionBase, tpTargets);
+        console.log(
+          `[Bot] S3 TPs set: ${tpPrices.map((p) => `$${p.toFixed(2)}`).join(" / ")}`
+        );
+      } else {
+        console.log(
+          `[DRY_RUN] Would set S3 TPs: ${tpPrices.map((p) => `$${p.toFixed(2)}`).join(" / ")}`
+        );
+      }
     }
 
     // 13. Record position
@@ -293,7 +314,7 @@ async function runLoop(mcpClient: MCPClient): Promise<void> {
       stopPrice,
       marginUsd: sizing.marginUsd,
       riskDollar: sizing.riskDollar,
-      leverage: confluence.leverage,
+      leverage: tradeLeverage,
       confluenceScore: confluence.score,
       stopDistancePct: primarySignal.stopDistancePct,
     };
@@ -307,11 +328,11 @@ async function runLoop(mcpClient: MCPClient): Promise<void> {
       direction: confluence.direction,
       entry_price: entryPrice,
       stop_loss: stopPrice,
-      take_profit: null,
-      leverage: confluence.leverage,
+      take_profit: tpPrices.length > 0 ? tpPrices[0] : null,
+      leverage: tradeLeverage,
       position_size_usd: sizing.positionUsd,
       margin_used_usd: sizing.marginUsd,
-      risk_percent: confluence.riskPercent * 100,
+      risk_percent: MARGIN_PCT * 100,
       confluence_score: confluence.score,
       notes: `tx: ${txSig}`,
     });

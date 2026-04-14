@@ -20,6 +20,28 @@
 import { IndicatorSnapshot } from "../tradingview/reader";
 import { Signal, ConfluenceResult, Direction } from "./types";
 
+/**
+ * Fixed leverage per strategy (user-configured).
+ * S1 = trend-follow (10x), S2 = mean-reversion (8x), S3 = scalp (5x).
+ * Priority when multiple strategies align: highest-priority strategy wins (S1 > S2 > S3).
+ */
+export const STRATEGY_LEVERAGE: Record<"S1" | "S2" | "S3", number> = {
+  S1: 10,
+  S2: 8,
+  S3: 5,
+};
+
+/**
+ * Returns the leverage to apply for a given set of active signals.
+ * Uses the highest-priority strategy present (S1 > S2 > S3).
+ */
+export function getLeverageForSignals(signals: Signal[]): number {
+  const ids = new Set(signals.map((s) => s.strategy));
+  if (ids.has("S1")) return STRATEGY_LEVERAGE.S1;
+  if (ids.has("S2")) return STRATEGY_LEVERAGE.S2;
+  return STRATEGY_LEVERAGE.S3;
+}
+
 export function scoreSignals(
   signals: Signal[],
   snapDaily: IndicatorSnapshot
