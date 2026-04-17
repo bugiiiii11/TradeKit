@@ -304,4 +304,34 @@ Once clarifications are answered, the plan should target:
 
 ---
 
-*Prepared 2026-04-17 for handoff to next Claude Code session. If reading >2 weeks later, re-check Drift Protocol incident status and Hyperliquid API stability. All technical decisions assume those remain unchanged.*
+## Decisions Made (Session 19)
+
+**Profitable version approved and planned.** No demo-for-Krown version (separate project if needed later).
+
+**All 7 clarifying questions answered via Flash project research:**
+1. ✅ Indicator parity — needs 2-3 day audit before Phase 1
+2. ✅ Strategy selection — backtest all three on 12 months, then decide
+3. ✅ Backtest data — Binance Data Portal + REST, no Pine Script limitation
+4. ✅ Infrastructure — OCI ARM #2 confirmed safe, all packages pure JS
+5. ✅ Capital phasing — $500 first, scale to $1,500 after 50 trades positive
+6. ✅ Transition — VPS in simulation mode for 7 days parallel with desktop
+7. ✅ Monitoring — Telegram + pm2 + Supabase, no paid tooling needed
+
+**Key technical corrections:**
+- 52-day limit is REAL (5000-candle retention), Binance mandatory
+- Tier 0 fees: 0.045% taker, 0.015% maker (not rebate)
+- SDK: @nktkas/hyperliquid, not @hyperliquid/sdk
+- technicalindicators matches TV <0.1% with correct formulas
+
+**Architecture locked:**
+- Venue: Hyperliquid mainnet (not Drift)
+- Data: Hyperliquid WebSocket + local indicators (drop TradingView MCP)
+- Infrastructure: OCI ARM #2 + pm2 + Supabase + Telegram
+- Strategies: S1/S2/S3 (validated on 12-month backtest)
+- Capital: $500 → $1,500 ramp over Phases 3-4
+
+**Next session:** Start Phase 0 (indicator parity audit, Binance ingest, 12mo backtest validation).
+
+---
+
+*Prepared 2026-04-17 for handoff to next Claude Code session. Decisions locked 2026-04-17 after Flash research validation. If reading >2 weeks later, re-check Drift Protocol incident status and Hyperliquid API stability. All technical decisions assume those remain unchanged.*
