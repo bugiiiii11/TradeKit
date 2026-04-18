@@ -1,0 +1,118 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(tsx:*)",
+      "Bash(pm2:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(echo:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(sort:*)",
+      "Bash(diff:*)",
+      "Bash(mkdir:*)",
+      "Bash(cd:*)",
+      "Bash(pwd)",
+      "Bash(which:*)",
+      "Bash(date:*)",
+      "Bash(curl:*)",
+
+      "Read",
+      "Glob",
+      "Grep",
+
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:npmjs.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:hyperliquid.gitbook.io)",
+      "WebFetch(domain:nktkas.gitbook.io)",
+      "WebFetch(domain:api.hyperliquid.xyz)",
+      "WebFetch(domain:app.hyperliquid.xyz)",
+      "WebFetch(domain:api.binance.com)",
+      "WebFetch(domain:data.binance.vision)",
+      "WebFetch(domain:supabase.com)",
+      "WebFetch(domain:docs.supabase.com)",
+      "WebFetch(domain:www.tradingview.com)",
+      "WebFetch(domain:medium.com)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -f:*)",
+      "Bash(git checkout -- :*)"
+    ],
+    "additionalDirectories": [
+      "C:\\work\\TradeKit\\.claude",
+      "C:\\Users\\mathe\\.claude\\projects\\c--work-TradeKit\\memory"
+    ]
+  },
+  "env": {
+    "DISABLE_AUTO_COMPACT": "1"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-dangerous.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-internal-urls.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-files.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|WebFetch|WebSearch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/audit-all.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read|WebFetch|WebSearch|Bash|Grep|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scan-injection.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

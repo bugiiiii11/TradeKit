@@ -37,3 +37,8 @@ Thumbs.db
 
 # Safety audit log (local only)
 .claude/safety-audit.jsonl
+
+# Per-user Claude Code overrides (MCP enablement, personal perms)
+# Shared config lives in .claude/settings.json (committed)
+.claude/settings.local.json
+context-pin.md
