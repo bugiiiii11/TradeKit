@@ -9,28 +9,32 @@
 - **Master wallet:** `0x3a8a318097017aCE0db8276ea435F26DE8674C46` (MetaMask)
 - **API wallet:** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (trade-only, no withdraw)
 - **Network:** mainnet | **Mode:** LIVE
-- **Strategy:** BTC perps, 3 strategies (S1/S2/S3), multi-TF confluence
-- **Leverage:** S1=10x, S2=8x, S3=5x | **Sizing:** 5% margin-based
+- **Strategy:** BTC perps, S1+S2 active (S3 disabled — confirmed dead in 484-day backtest)
+- **Leverage:** S1=10x, S2=8x | **Sizing:** 5% margin-based
+- **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
 - **GitHub:** `github.com/bugiiiii11/TradeKit` | **Vercel:** `trade-kit.vercel.app`
 - **Supabase:** project `gseztkzguxasfwqnztuo` | 11 tables, RLS enabled
 
-## Architecture
+## Architecture (Two-Bot)
 
 ```
-TradingView Desktop (BINANCE:BTCUSDC, 9 indicators, CDP port 9222)
-        │
-tradingview-mcp (Node child process, stdio MCP)
-        │
-Trading Bot (src/main.ts, 15-min loop)
-        │ Strategy eval → risk gate → margin sizing → order
-Hyperliquid SDK @nktkas/hyperliquid (viem wallet, isolated margin)
-        │
-Hyperliquid mainnet
+Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
+  TradingView MCP (CDP 9222)                Hyperliquid WebSocket (15m)
+  → indicator snapshots                     → local indicator computation
+  │                                         → 1H/4H/1D via aggregator
+  └──────────┬──────────────────────────────┘
+             │  Shared: strategy eval → risk gate → sizing → order
+             │  Shared: Supabase (tagged by source: tv-bot / vps-bot)
+  Hyperliquid SDK @nktkas/hyperliquid (viem wallet, isolated margin)
+             │
+  Hyperliquid mainnet (separate API wallets per bot)
 ```
 
 ## Key Files
 
-**Bot core:** `src/main.ts` (main loop + reconciliation), `src/mcp/client.ts` (MCP with retry/reconnect), `src/tradingview/reader.ts` (multi-TF snapshots)
+**Bot core:** `src/main.ts` (desktop bot, TV MCP loop), `src/main-headless.ts` (VPS bot, WebSocket event-driven), `src/mcp/client.ts` (MCP with retry/reconnect), `src/tradingview/reader.ts` (multi-TF snapshots)
+
+**Headless infra:** `src/ws/candle-consumer.ts` (15m WS subscription, 600-bar buffer, bar-close detection, heartbeat/reconnect, REST gap-fill), `src/indicators/calculator.ts` (shared EMA/RSI/StochRSI/BBWP/PMARP), `src/backtest/aggregator.ts` (15m→1H/4H/1D)
 
 **Hyperliquid:** `src/hyperliquid/client.ts` (SDK init), `account.ts` (balance, positions, funding, fills), `orders.ts` (market/limit, SL/TP, scaled TPs, stop cleanup, isolated margin)
 
@@ -42,7 +46,7 @@ Hyperliquid mainnet
 
 **Commands:** `src/commands/handlers.ts` — kill_switch, resume, manual_trade
 
-**Backtest:** `src/backtest/` — `collector.ts` (Hyperliquid candle API), `indicators.ts` (EMA/RSI/StochRSI/BBWP/PMARP), `aligner.ts` (multi-TF alignment), `engine.ts` (strategy replay + fees), `reporter.ts` (stats + Supabase storage). CLI: `src/scripts/backtest.ts`
+**Backtest:** `src/backtest/` — `collector.ts` (Hyperliquid candle API), `indicators.ts` (re-exports from indicators/calculator), `aligner.ts` (multi-TF alignment), `engine.ts` (strategy replay + fees + funding), `reporter.ts` (stats + Supabase storage), `aggregator.ts` (15m→higher TF), `binance-loader.ts` (CSV parser). CLI: `src/scripts/backtest.ts`, `backtest_binance.ts` (12-month)
 
 **Frontend** (Next.js 16 + React 19 + Tailwind v4 + shadcn base-nova):
 - Pages: dashboard, market-data, trades, strategies, automation, backtests (all under `(app)` route group)
@@ -68,6 +72,10 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 | `test_risk_hydration.ts` | 5-case risk state hydration test |
 | `test_custom_trade.ts` | CLI manual trade with SL + scaled TPs |
 | `backtest.ts` | Strategy replay: `--days 90 --bankroll 500 --margin 5` |
+| `backtest_binance.ts` | 12-month replay: `--bankroll 500 --strategies S1,S2 --pmarp-period 20 --pmarp-lookback 350` |
+| `validate_indicators.ts` | Compare local indicators vs TradingView (needs TV Desktop + CDP) |
+| `download_binance.ts` | Download BTC 15m klines from Binance: `--months=24` |
+| `migrate_source_columns.ts` | Add source/target columns for two-bot architecture |
 
 ## Conventions
 
@@ -108,8 +116,9 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 ## Background Processes
 
 - **TradingView Desktop** — CDP port 9222. Relaunch: `launch_tradingview.ps1`. Loses state on Windows sleep.
-- **LIVE bot** — PowerShell window, 15-min ticks. Check handoff.md for current code version status.
-- **tradingview-mcp** — child process of bot, dies with bot
+- **Desktop bot** — PowerShell window, 15-min ticks. Check handoff.md for current code version status.
+- **VPS bot** — `npm run start:headless` (or pm2 on VPS). Event-driven on WebSocket bar close. Separate API wallet.
+- **tradingview-mcp** — child process of desktop bot, dies with bot
 - **Supabase Realtime** — bot holds WebSocket channel for `bot_commands` INSERT events
 - **Vercel** — `trade-kit.vercel.app`, auto-deploys on push to `main`
 - **Safety hooks** — `protect-files.sh` active (blocks `.env*` edits). Others need `jq` (`winget install jqlang.jq`).

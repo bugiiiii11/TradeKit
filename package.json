@@ -5,6 +5,7 @@
   "main": "dist/main.js",
   "scripts": {
     "start": "ts-node src/main.ts",
+    "start:headless": "ts-node src/main-headless.ts",
     "dev": "ts-node --watch src/main.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
