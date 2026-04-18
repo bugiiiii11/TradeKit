@@ -139,8 +139,13 @@ export async function fetchCandles(
 // Indicator computation
 // ---------------------------------------------------------------------------
 
+export interface IndicatorParams {
+  pmarpPeriod?: number;   // SMA period (default 50)
+  pmarpLookback?: number; // percentile lookback (default 200)
+}
+
 /** Attaches computed indicators to every candle in the array. */
-export function buildBarData(candles: Candle[]): BarData[] {
+export function buildBarData(candles: Candle[], params?: IndicatorParams): BarData[] {
   const closes = candles.map(c => c.close);
 
   const ema8   = computeEMA(closes, 8);
@@ -151,7 +156,7 @@ export function buildBarData(candles: Candle[]): BarData[] {
   const rsi14  = computeRSI(closes, 14);
   const { k: stochK, d: stochD } = computeStochRSI(closes);
   const bbwp  = computeBBWP(closes);
-  const pmarp = computePMARP(closes);
+  const pmarp = computePMARP(closes, params?.pmarpPeriod, params?.pmarpLookback);
 
   return candles.map((c, i) => ({
     ...c,
@@ -191,6 +196,7 @@ export interface CollectedData {
 export async function collectAllTimeframes(
   backtestDays: number,
   endMs: number = Date.now(),
+  params?: IndicatorParams,
 ): Promise<CollectedData> {
   const backtestStartMs = endMs - backtestDays * 24 * 60 * 60 * 1000;
 
@@ -200,7 +206,7 @@ export async function collectAllTimeframes(
     console.log(`[Collector] Fetching ${tf} candles (${backtestDays + (WARMUP_DAYS[tf] ?? 30)} days)...`);
     const candles = await fetchCandles(tf, startMs, endMs);
     console.log(`[Collector]   → ${candles.length} candles received`);
-    return buildBarData(candles);
+    return buildBarData(candles, params);
   };
 
   // Fetch sequentially to avoid Hyperliquid 429 rate limits

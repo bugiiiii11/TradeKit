@@ -81,6 +81,8 @@ export interface BacktestConfig {
   bankroll: number;
   /** Fraction of bankroll used as margin per trade. Default 0.05. */
   marginPct: number;
+  /** Which strategies are enabled. Default: all three. */
+  enabledStrategies?: StrategyId[];
 }
 
 export interface BacktestStats {

@@ -24,7 +24,8 @@ import { loadBinanceData } from "../backtest/binance-loader";
 import { alignBars } from "../backtest/aligner";
 import { runBacktest } from "../backtest/engine";
 import { printResults, saveResultsToFile, saveToSupabase } from "../backtest/reporter";
-import type { BacktestConfig } from "../backtest/types";
+import type { BacktestConfig, StrategyId } from "../backtest/types";
+import type { IndicatorParams } from "../backtest/collector";
 
 function getFlag(name: string, defaultVal: string): string {
   const idx = process.argv.indexOf(`--${name}`);
@@ -41,16 +42,24 @@ async function main(): Promise<void> {
   const bankroll = getNumFlag("bankroll", 500);
   const marginPct = getNumFlag("margin", 5) / 100;
   const dataDir = getFlag("data-dir", path.resolve(process.cwd(), "data/bt-data"));
+  const pmarpPeriod = getNumFlag("pmarp-period", 20);
+  const pmarpLookback = getNumFlag("pmarp-lookback", 350);
+  const strategiesRaw = getFlag("strategies", "S1,S2,S3");
+  const enabledStrategies = strategiesRaw.split(",").map(s => s.trim()) as StrategyId[];
 
-  console.log(`\n[Backtest-Binance] Starting 12-month backtest`);
+  const indicatorParams: IndicatorParams = { pmarpPeriod, pmarpLookback };
+
+  console.log(`\n[Backtest-Binance] Starting backtest`);
   console.log(`[Backtest-Binance] Bankroll: $${bankroll} | Margin: ${(marginPct * 100).toFixed(0)}%`);
+  console.log(`[Backtest-Binance] Strategies: ${enabledStrategies.join(", ")}`);
+  console.log(`[Backtest-Binance] PMARP: period=${pmarpPeriod}, lookback=${pmarpLookback}`);
   console.log(`[Backtest-Binance] Data dir: ${dataDir}`);
   console.log(`[Backtest-Binance] Fees: 0.045% taker × 2 = 0.09% RT | Funding: 0.00125%/hr\n`);
 
   const t0 = Date.now();
 
   // Step 1: load Binance data + aggregate + compute indicators
-  const collected = await loadBinanceData(dataDir);
+  const collected = await loadBinanceData(dataDir, 700, indicatorParams);
   console.log(`[Backtest-Binance] Data loaded in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
   // Step 2: align
@@ -74,7 +83,7 @@ async function main(): Promise<void> {
   const days = Math.round((lastTs - firstTs) / (24 * 60 * 60_000));
   console.log(`[Backtest-Binance] Window: ${days} days (${new Date(firstTs).toISOString().split("T")[0]} → ${new Date(lastTs).toISOString().split("T")[0]})`);
 
-  const config: BacktestConfig = { days, bankroll, marginPct };
+  const config: BacktestConfig = { days, bankroll, marginPct, enabledStrategies };
 
   // Step 3: replay
   console.log(`[Backtest-Binance] Running strategy replay...`);

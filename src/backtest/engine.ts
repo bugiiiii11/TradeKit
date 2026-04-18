@@ -270,13 +270,14 @@ export function runBacktest(
     }
 
     // === PHASE 2: ENTRY EVALUATION (updates module prev state) ===
+    const enabled = config.enabledStrategies ?? ["S1", "S2", "S3"];
     const s1Signal = evaluateS1(snap4H, snap1D);
     const s2Signal = evaluateS2(snap1H, snap4H);
     const s3Signal = evaluateS3(snap15m, snap1H);
 
     if (!openPos) {
       const rawSignals = [s1Signal, s2Signal, s3Signal].filter(
-        (s): s is NonNullable<typeof s> => s !== null,
+        (s): s is NonNullable<typeof s> => s !== null && enabled.includes(s.strategy as StrategyId),
       );
 
       if (rawSignals.length > 0) {

@@ -9,10 +9,7 @@
  *   RSI      — Wilder's smoothing (RMA)
  *   StochRSI — Stoch applied to RSI, then SMA-smoothed K and D
  *   BBWP     — Bollinger Band Width Percentile (Chris Moody, period=13, stdDev=1, lookback=252)
- *   PMARP    — Price/SMA Ratio Percentile (period=50, lookback=200)
- *
- * Note: BBWP and PMARP use default TV parameters. If your chart uses
- * different settings, S2 signal counts may differ from live bot.
+ *   PMARP    — Price/SMA Ratio Percentile (period=20, lookback=350, per Strategy KB)
  */
 
 // ---------------------------------------------------------------------------
@@ -168,7 +165,9 @@ export function computeBBWP(
 /**
  * PMARP — Price Moving Average Ratio Percentile.
  *
- * Default params: SMA period = 50, lookback = 200
+ * Default params: SMA period = 20, lookback = 350 (Strategy KB values).
+ * Confirmed via PMARP sweep (2026-04-18): (20,350) outperforms (50,200)
+ * and (50,100) across 484 days of BTC data.
  *
  * Formula: ratio = close / SMA(close, maPeriod)
  *          PMARP = percentile rank of ratio over last `lookback` bars (0–100)
@@ -178,8 +177,8 @@ export function computeBBWP(
  */
 export function computePMARP(
   prices: number[],
-  maPeriod = 50,
-  lookback = 200,
+  maPeriod = 20,
+  lookback = 350,
 ): number[] {
   const len = prices.length;
   const result = new Array(len).fill(NaN) as number[];

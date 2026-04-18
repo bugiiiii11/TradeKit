@@ -8,7 +8,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { buildBarData, type CollectedData } from "./collector";
+import { buildBarData, type CollectedData, type IndicatorParams } from "./collector";
 import { aggregateTo1H, aggregateTo4H, aggregateTo1D } from "./aggregator";
 import type { Candle } from "./types";
 
@@ -29,8 +29,10 @@ function parseCsv(filePath: string): Candle[] {
     const cols = line.split(",");
     if (cols.length < 6) continue;
 
-    const timestamp = parseInt(cols[0], 10);
+    let timestamp = parseInt(cols[0], 10);
     if (Number.isNaN(timestamp)) continue; // skip header if present
+    // Binance Data Vision uses microseconds (16 digits), REST API uses milliseconds (13 digits)
+    if (timestamp > 1e13) timestamp = Math.floor(timestamp / 1000);
 
     candles.push({
       timestamp,
@@ -77,6 +79,7 @@ function validateGaps(candles: Candle[]): number {
 export async function loadBinanceData(
   dataDir: string,
   warmupBars = 700,
+  params?: IndicatorParams,
 ): Promise<CollectedData> {
   console.log(`[BinanceLoader] Loading CSVs from ${dataDir}...`);
 
@@ -127,11 +130,14 @@ export async function loadBinanceData(
   console.log(`  1H: ${candles1H.length} bars | 4H: ${candles4H.length} bars | 1D: ${candles1D.length} bars`);
 
   // Compute indicators on all timeframes
-  console.log("[BinanceLoader] Computing indicators...");
-  const bars15m = buildBarData(unique);
-  const bars1H  = buildBarData(candles1H);
-  const bars4H  = buildBarData(candles4H);
-  const bars1D  = buildBarData(candles1D);
+  const pLabel = params?.pmarpPeriod || params?.pmarpLookback
+    ? ` (PMARP ${params.pmarpPeriod ?? 50}/${params.pmarpLookback ?? 200})`
+    : "";
+  console.log(`[BinanceLoader] Computing indicators${pLabel}...`);
+  const bars15m = buildBarData(unique, params);
+  const bars1H  = buildBarData(candles1H, params);
+  const bars4H  = buildBarData(candles4H, params);
+  const bars1D  = buildBarData(candles1D, params);
 
   // Backtest starts after warmup period
   const backtestStartMs = unique[Math.min(warmupBars, unique.length - 1)].timestamp;
