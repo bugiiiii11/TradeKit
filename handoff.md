@@ -12,42 +12,58 @@
 
 ---
 
-## What Was Done (Session 17) — Backtests page + pagination fix
-
-1. **Fixed Hyperliquid 429 rate limiting** — `src/backtest/collector.ts`: changed parallel TF fetching to sequential, added retry with backoff (5 attempts: 3s/8s/20s/40s/60s), 1.5s sleep between paginated pages, 3s gap between timeframes.
-2. **Fixed pagination bug (critical)** — The API anchors responses to `endTime` and returns the most-recent N bars, so forward pagination (`cursor = lastTs + 1`) always returned the same trailing ~5000 15m bars (~49 days) regardless of `--days`. Fixed by backwards pagination: `windowEnd = firstTs - 1` after each page. Both runs now cover their full requested window with distinct trade data.
-3. **`reporter.ts` — per-run file saving** — Results now saved to `backtest-results/{days}d-{YYYYMMDD}-{HHmmss}.json` (never overwritten). Legacy `backtest-results.json` still written for backward compat. Directory created at `TradingBot/backtest-results/`.
-4. **Frontend Backtests page** — `frontend/src/app/(app)/backtests/page.tsx`: SSR loader reads all JSON files from `backtest-results/` directory, sorts newest-first, passes to `BacktestTabs`. Auto-picks up new runs on page refresh — no code changes needed.
-5. **`BacktestTabs` component** — `frontend/src/components/backtest-tabs.tsx`: Client Component, one tab per run (label `{days}d · {date}`), config badges, 6 stat cards, strategy breakdown table, full trade log sorted newest-first.
-6. **Nav updated** — Desktop nav: "Backtests" link added. Mobile nav: "Strategy" tab replaced with "Backtest" (`FlaskConical` icon).
-7. **Backtest runs executed** — 90d (113 trades, S2 +$12.99, total -$5.93) and 365d (correct full-window data, different trade count/distribution vs 90d) both saved to `backtest-results/`. Old broken runs from before the pagination fix also present as earlier tabs.
-
-## What Was Done (Session 18) — S3 overtrading fix, Supabase backtests, native close detection
-
-1. **S3 overtrading analysis** — Backtest data (90d, 102 S3 trades) analysed in depth: 29% win rate, -$11.92 PnL. All `stoch_rsi_reverse_cross` exits at ≤45min were losses (15 trades, -$3.75). `max_hold_time` exits had 87.5% win rate. tp2/tp3 never reached.
-2. **S3 entry filter: BBWP < 40** — `src/strategy/s3_stoch_rsi.ts`: added `S3_BBWP_MAX = 40` constant. Blocks S3 entries when 1H BBWP ≥ 40 (high-volatility = StochRSI crosses are noise).
-3. **S3 exit filter: 45min min hold** — `src/strategy/s3_stoch_rsi.ts`: added `S3_MIN_HOLD_MS = 45 * 60 * 1000`. Gates `stoch_rsi_reverse_cross` exit behind minimum hold time.
-4. **Backtest validation** — 90d re-run: S3 trades 102→46 (-55%), total PnL -$5.93→-$0.84, max DD -2.6%→-1.7%, profit factor 0.86→0.97, Sharpe -0.89→-0.00. S1/S2 unchanged.
-5. **Backtest results in Supabase** — New `backtest_runs` table (30 columns). `saveToSupabase()` in `src/backtest/reporter.ts`. Migration script at `src/scripts/migrate_backtest_runs.ts`. RLS policy added.
-6. **Backtests page reads from Supabase** — `frontend/src/app/(app)/backtests/page.tsx` rewritten from local filesystem reads to Supabase queries. Works on Vercel production.
-7. **Dashboard layout** — Manual Trade card moved from below Recent Ticks to right below the 4 stat cards for quicker access.
-8. **Native TP/SL close detection** — `reconcilePositions()` in `src/main.ts`: compares `activePositions[]` against live Hyperliquid positions each tick. When a position disappears, fetches real fill price from `getUserFills()`, computes actual PnL, calls `insertClosedTrade()`. Heuristic: profit = `native_tp`, loss = `native_sl`.
-9. **Manual trade position tracking** — `CommandHandlerContext.registerManualPosition()` callback added. `handleManualTrade` now pushes into `activePositions[]` after confirmed fill, so the reconciliation loop can detect native closes and log them.
-10. **3 commits pushed** — `191c1e5` (S3 fix + backtests page), `981b714` (Supabase storage + dashboard), `0155e74` (reconciliation + manual trade tracking).
-
 ## What Was Done (Session 19) — VPS deployment planning
 
-1. **VPS deployment planning docs** — Created `IMPLEMENTATION_PLAN.md` and `docs/` with deployment roadmap for moving the bot from local PowerShell to a VPS. Implementation roadmap, cost analysis, and architecture decisions documented.
+1. **VPS deployment planning docs** — Created `IMPLEMENTATION_PLAN.md` and `docs/` with deployment roadmap for moving the bot from local PowerShell to a VPS.
 2. **Final handoff document + memory entries** — Updated handoff.md, decision log, session summary.
 3. **No bot code changes** — LIVE bot still running pre-reconciliation Session 18 code.
 
 ## What Was Done (Session 20) — Knowledge architecture restructuring
 
-1. **Created `CLAUDE.md`** — Permanent project context (architecture, key files, conventions, risk config, security rules, untested paths) extracted from handoff.md. Auto-loaded every message (~135 lines).
-2. **Created `docs/session-archive.md`** — Sessions 1-16 moved to cold storage (808 lines). Never read by `/start`.
-3. **Trimmed `handoff.md`** — From 1138 lines to ~200. Only last 3 sessions + Watchlist + What To Do Next.
-4. **Updated `/start` skill** — Reads last ~200 lines of handoff.md instead of the full file.
-5. **Initialized memory system** — Key project decisions and user preferences.
+1. **Created `CLAUDE.md`** — Permanent project context extracted from handoff.md. Auto-loaded every message.
+2. **Created `docs/session-archive.md`** — Sessions 1-16 moved to cold storage.
+3. **Trimmed `handoff.md`** — From 1138 lines to ~200.
+4. **Initialized memory system** — Key project decisions and user preferences.
+
+## What Was Done (Session 21) — Phase 0 validation + Phase 1 headless bot
+
+**Major session: built the complete VPS headless bot pipeline from scratch.**
+
+### Phase 0: Validation Infrastructure
+1. **TimeframeAggregator** (`src/backtest/aggregator.ts`) — 15m → 1H/4H/1D candle aggregation, reusable for live WebSocket.
+2. **Indicator validation script** (`src/scripts/validate_indicators.ts`) — compares local indicators vs TradingView + PMARP parameter sweep. Blocked: needs TradingView Desktop (colleague to run).
+3. **Binance data pipeline** — `download_binance.ts` (24 months downloaded, 71K rows) + `binance-loader.ts` (CSV parser with microsecond→ms fix, TF aggregation).
+4. **Backtest corrections** — Fee fix (0.035%→0.045% taker, 0.09% RT), hourly funding rate modeling, configurable PMARP params, per-strategy enable/disable.
+5. **PMARP parameter sweep** — Tested (50,200), (20,350), (50,100) across 484 days. KB params (20,350) are optimal: portfolio Sharpe -0.42→+0.57. **Fixed defaults to (20,350).**
+6. **S1+S2 confirmation backtest** — With S3 disabled + PMARP (20,350): +$81.24 (+16.2%), Sharpe 3.55, max DD -4.8% over 379 days.
+
+### Phase 1: Headless Bot
+7. **Promoted indicators** — `src/indicators/calculator.ts` (shared by both bots + backtest). Old `backtest/indicators.ts` re-exports.
+8. **WebSocket candle consumer** (`src/ws/candle-consumer.ts`) — 15m subscription via SDK `SubscriptionClient`, 600-bar buffer, bar-close detection (t-field advancing), heartbeat (30s), reconnect on 60s stale, REST gap-fill.
+9. **Headless entry point** (`src/main-headless.ts`) — Event-driven (on bar close), ENABLED_STRATEGIES env var (default S1,S2), PMARP (20,350) hardcoded, source tagging.
+10. **Tested locally** — `DRY_RUN=true npm run start:headless` — REST warmup, WS subscribe, indicator computation, strategy evaluation all working.
+
+### Supabase Source Separation
+11. **Source tagging** — `market_snapshots`, `risk_snapshots`, `positions` get `source` column. `bot_commands` gets `target` column. `loadLatestRiskState()` filters by source.
+12. **Migration script** (`src/scripts/migrate_source_columns.ts`) — SQL ready. **Must run in Supabase SQL Editor before deploying VPS bot.**
+
+### Docs & Config
+13. **CLAUDE.md updated** — Two-bot architecture, headless infra, PMARP fix, S3 disabled, new scripts.
+14. **Implementation plan rewritten** — `docs/IMPLEMENTATION_PLAN.md` reflects two-bot architecture (additive, not replacement).
+15. **npm script added** — `npm run start:headless`
+
+### Key Findings
+- **S1 is the best strategy** — +$63-81 over 379-484 days, 57-70% win rate, but only ~10-14 trades/year.
+- **S2 nearly breakeven** with correct PMARP (20,350) — was -$29 with wrong params, now -$0.49.
+- **S3 is confirmed dead** — 556 trades, 29% win rate, -$60. Disabled.
+- **Two-bot architecture** — VPS bot is additive, separate wallet, shared Supabase.
+
+### Commits (5, all pushed)
+- `d397500` Phase 0: validation infrastructure + two-bot architecture
+- `8d7e458` PMARP fix (50,200→20,350) + strategy enable/disable + parameter sweep
+- `e1900b3` Phase 1: headless entry point + WebSocket candle consumer
+- `cbc26ee` Supabase source separation for two-bot architecture
+- `06f5f49` Migration script + npm start:headless + CLAUDE.md update
 
 ---
 
@@ -57,17 +73,19 @@
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-04-14 | Bot needs restart for commit `0155e74` | Running pre-reconciliation code. Native TP/SL detection + manual trade tracking not active. | Ctrl+C PS window → `$env:DRY_RUN="false"; npm start` |
+| 2026-04-14 | Desktop bot needs restart for commit `0155e74` | Running pre-reconciliation code. Native TP/SL detection + manual trade tracking not active. | Ctrl+C PS window → `$env:DRY_RUN="false"; npm start` |
+| 2026-04-18 | Supabase migration pending | Source/target columns not yet added. VPS bot will fail on Supabase writes until migration runs. | Run SQL from `migrate_source_columns.ts` in Supabase SQL Editor |
+| 2026-04-18 | TradingView indicator validation pending | Blocked on colleague having TV Desktop. Confirms local indicators match chart. | Colleague runs `validate_indicators.ts` with TV + CDP |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Restart bot with reconciliation code** | low | Current instance pre-commit `0155e74`. Pick up native TP/SL detection + manual trade tracking. |
-| 2 | **Verify manual trade Supabase logging** | low | Place manual trade from dashboard, let TP/SL fire, confirm on Trades page with `source: "manual"` + correct exit price. |
-| 3 | **Further S3 tuning** | med | Still net negative (-$6.88/46 trades). Options: trade cooldown, tighter RSI range, require 1H trend alignment. Backtest each before deploying. |
-| 4 | **Multi-asset support (ETH/SOL)** | high | New TV charts + indicators, strategy params per asset, dynamic asset index, risk manager changes. Major expansion. |
-| 5 | Tighten RLS policies | low | Gate INSERT/UPDATE/DELETE on `auth.uid()` for user-controlled tables. Must-do before multi-user. |
-| 6 | Install `jq` for safety hooks | low | `winget install jqlang.jq` + restart VS Code. `protect-files.sh` already works without it. |
-| 7 | Frontend command execution toast | trivial | Show "Kill command sent…" immediately, then replace with result toast. |
-| 8 | Add `[Portfolio]` prefix to portfolio logs | trivial | Cosmetic — portfolio stats default to source `main` in bot_logs. |
+| 1 | **Run Supabase migration** | low | Paste SQL from `migrate_source_columns.ts` into SQL Editor. Required before VPS bot goes live. |
+| 2 | **Restart desktop bot** | low | Still running pre-reconciliation code from Session 18. |
+| 3 | **Create VPS API wallet** | low | Colleague creates new Hyperliquid agent wallet, funds with $500. |
+| 4 | **TradingView indicator validation** | low | Colleague runs `validate_indicators.ts`. Confirms PMARP (20,350) matches chart. |
+| 5 | **Deploy headless bot to OCI VPS** | med | Clone repo, `npm install`, `.env.vps` with new wallet key, `pm2 start`. |
+| 6 | **Phase 2: testnet paper trading** | med | Run VPS bot on testnet for 2-3 weeks, >15 trades. |
+| 7 | **S2 entry tuning** | med | S2 at 40% win rate with correct PMARP. Investigate losing trades — tighter BBWP or PMARP threshold? |
+| 8 | **S1 entry loosening** | med | Only ~10 trades/year. Can EMA alignment be relaxed (3 of 4 instead of all 4)? |
