@@ -121,7 +121,8 @@ export function printResults(result: BacktestResult): void {
   console.log(`    (real bot uses 33/33/34% partial closes at +1%/+3%/+5%)`);
   console.log(`  • BBWP/PMARP use default TV params — may differ if chart settings differ`);
   console.log(`  • Confluence macro filter applied (matches live bot behaviour)`);
-  console.log(`  • Fee: 0.035% taker × 2 sides deducted per trade`);
+  console.log(`  • Fee: 0.045% taker × 2 sides = 0.09% round-trip (Tier 0)`);
+  console.log(`  • Funding: 0.00125%/hr applied hourly to open positions (longs pay)`);
   console.log(`  • One position at a time (no concurrent positions)`);
   console.log(`${DLINE}\n`);
 }

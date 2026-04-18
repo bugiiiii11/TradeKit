@@ -24,6 +24,7 @@ data/*.db
 data/*.db-journal
 data/*.db-shm
 data/*.db-wal
+data/bt-data/
 emergency-snapshot.md
 
 # Debug / logs

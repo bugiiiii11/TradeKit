@@ -22,11 +22,13 @@ import type { Candle, BarData } from "./types";
 const HL_API = "https://api.hyperliquid.xyz/info";
 const MAX_REQUESTS = 100; // pagination safety cap
 
-/** How many extra days to fetch per TF to warm up the longest-lookback indicators. */
+/** How many extra days to fetch per TF to warm up the longest-lookback indicators.
+ *  Minimum 600 bars per TF: EMA200 needs 3×200=600 for convergence,
+ *  PMARP(20,350) needs 370 bars. 700 bars gives comfortable margin. */
 const WARMUP_DAYS: Record<string, number> = {
-  "15m": 3,   // 252 × 15m ≈ 2.6 days
-  "1H":  12,  // 252 × 1h ≈ 10.5 days
-  "4H":  45,  // 252 × 4h ≈ 42 days
+  "15m": 8,   // 700 × 15m ≈ 7.3 days
+  "1H":  30,  // 700 × 1h ≈ 29 days
+  "4H":  120, // 700 × 4h ≈ 117 days (capped by 52-day API limit → ~312 bars)
   "1D":  270, // 252 + 13 (BB period) daily bars
 };
 

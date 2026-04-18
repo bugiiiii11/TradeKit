@@ -14,7 +14,8 @@
  *   - S3 TPs: full position exits at the highest TP level reached
  *     in the bar (simplified vs the real 33/33/34% partial closes)
  *   - Macro filter applied via scoreSignals (matches live bot)
- *   - Taker fee 0.035% per side (0.07% round-trip) deducted from PnL
+ *   - Taker fee 0.045% per side (0.09% round-trip) deducted from PnL
+ *   - Funding rate applied hourly to open positions
  */
 
 import { evaluateS1, resetS1State } from "../strategy/s1_ema_trend";
@@ -33,7 +34,12 @@ import type {
   StrategyId,
 } from "./types";
 
-const TAKER_FEE = 0.00035; // 0.035% per side → 0.07% round-trip
+const TAKER_FEE = 0.00045; // 0.045% per side → 0.09% round-trip (Tier 0)
+const SLIPPAGE_BPS = 0;    // additional cost per side in basis points (0 = disabled)
+
+// Funding rate: +0.01% per 8h = 0.00125% per hour (conservative bull-market estimate)
+const DEFAULT_HOURLY_FUNDING_RATE = 0.0000125; // 0.00125%
+const MS_PER_HOUR = 3_600_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -166,12 +172,13 @@ function buildTrade(
   exitPrice:        number,
   exitTimestamp:    number,
   reason:           string,
+  accumulatedFunding: number,
 ): BacktestTrade {
   const dirMult = pos.direction === "long" ? 1 : -1;
   const pnlPct  = ((exitPrice - pos.entryPrice) / pos.entryPrice) * dirMult;
   const grossPnl = pos.notionalUsd * pnlPct;
-  const feesUsd  = pos.notionalUsd * TAKER_FEE * 2;
-  const pnlUsd   = grossPnl - feesUsd;
+  const feesUsd  = pos.notionalUsd * (TAKER_FEE + SLIPPAGE_BPS / 10_000) * 2;
+  const pnlUsd   = grossPnl - feesUsd - accumulatedFunding;
   const dollarRisk = pos.notionalUsd * pos.stopDistancePct;
   const pnlR     = dollarRisk > 0 ? pnlUsd / dollarRisk : 0;
 
@@ -191,6 +198,7 @@ function buildTrade(
     pnlPct:           pnlPct * 100,
     pnlR,
     stopPrice:        pos.stopPrice,
+    fundingPnl:       accumulatedFunding,
   };
 }
 
@@ -219,6 +227,8 @@ export function runBacktest(
 
   let openPos: OpenPosition | null = null;
   let activeStrategies = "";
+  let accumulatedFunding = 0;
+  let lastFundingHour = -1;
 
   // Engine-tracked prev bars (for exit cross detection)
   let prev15m: BarData | null = null;
@@ -233,16 +243,29 @@ export function runBacktest(
     const snap4H  = barToSnapshot(bar4H,  "4H");
     const snap1D  = barToSnapshot(bar1D,  "1D");
 
+    // === FUNDING RATE APPLICATION (hourly) ===
+    if (openPos) {
+      const currentHour = Math.floor(bar15m.timestamp / MS_PER_HOUR);
+      if (currentHour !== lastFundingHour) {
+        // Longs pay positive funding, shorts receive it
+        const dirMult = openPos.direction === "long" ? 1 : -1;
+        accumulatedFunding += openPos.notionalUsd * DEFAULT_HOURLY_FUNDING_RATE * dirMult;
+        lastFundingHour = currentHour;
+      }
+    }
+
     // === PHASE 1: EXIT CHECKS (before evaluate() updates module prev state) ===
     if (openPos) {
       const exitResult = checkExit(openPos, prev15m, prev4H, prev1H, bar15m, bar4H, bar1H);
       if (exitResult.exit) {
-        const trade = buildTrade(openPos, activeStrategies, exitResult.exitPrice, bar15m.timestamp, exitResult.reason);
+        const trade = buildTrade(openPos, activeStrategies, exitResult.exitPrice, bar15m.timestamp, exitResult.reason, accumulatedFunding);
         trades.push(trade);
         equity += trade.pnlUsd;
         equityCurve.push({ timestamp: bar15m.timestamp, equity });
         openPos = null;
         activeStrategies = "";
+        accumulatedFunding = 0;
+        lastFundingHour = -1;
       }
     }
 
@@ -309,7 +332,7 @@ export function runBacktest(
   // Close any position still open at the end of the backtest window
   if (openPos && alignedBars.length > 0) {
     const lastBar = alignedBars[alignedBars.length - 1].bar15m;
-    const trade = buildTrade(openPos, activeStrategies, lastBar.close, lastBar.timestamp, "backtest_end");
+    const trade = buildTrade(openPos, activeStrategies, lastBar.close, lastBar.timestamp, "backtest_end", accumulatedFunding);
     trades.push(trade);
     equity += trade.pnlUsd;
     equityCurve.push({ timestamp: lastBar.timestamp, equity });

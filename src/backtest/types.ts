@@ -72,6 +72,8 @@ export interface BacktestTrade {
   /** Risk multiple: pnlUsd / (notionalUsd * stopDistancePct). */
   pnlR: number;
   stopPrice: number;
+  /** Funding cost accumulated during hold (positive = cost to longs). */
+  fundingPnl: number;
 }
 
 export interface BacktestConfig {
