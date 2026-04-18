@@ -156,8 +156,9 @@ async function onBarClose(snapshots: {
       snap4H,
       snap1D,
       confluence: signals.length > 0 ? confluence : null,
+      source: "vps-bot",
     });
-    await writeRiskSnapshot({ state: getState() });
+    await writeRiskSnapshot({ state: getState(), source: "vps-bot" });
 
     // 9. Early returns
     if (killed) {
@@ -338,7 +339,7 @@ async function reconcilePositions(livePositions: PositionInfo[]): Promise<void> 
         confluenceScore: pos.confluenceScore,
         stopDistancePct: pos.stopDistancePct,
         exitReason,
-        source: BOT_SOURCE as "bot",
+        source: "vps-bot",
       });
 
       activePositions.splice(i, 1);
@@ -406,6 +407,7 @@ async function checkExits(
           confluenceScore: pos.confluenceScore,
           stopDistancePct: pos.stopDistancePct,
           exitReason,
+          source: "vps-bot",
         });
 
         activePositions.splice(i, 1);
@@ -432,7 +434,7 @@ async function main(): Promise<void> {
 
   // Hydrate risk state
   try {
-    const hydrated = await loadLatestRiskState();
+    const hydrated = await loadLatestRiskState("vps-bot");
     if (hydrated) {
       hydrateState(hydrated);
       const s = getState();
@@ -463,7 +465,7 @@ async function main(): Promise<void> {
         stopDistancePct: pos.stopDistancePct,
       });
     },
-  });
+  }, BOT_SOURCE);
 
   printPortfolioStats(STARTING_BANKROLL);
 

@@ -12,7 +12,7 @@
 import { getSupabase } from "./supabase";
 import { Direction, StrategyId } from "../strategy/types";
 
-export type TradeSource = "bot" | "manual";
+export type TradeSource = "bot" | "manual" | "tv-bot" | "vps-bot";
 
 export interface ClosedTradeInput {
   strategy: StrategyId;

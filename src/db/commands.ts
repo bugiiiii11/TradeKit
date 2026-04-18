@@ -30,6 +30,7 @@ interface CommandRow {
   type: string;
   payload: unknown;
   status: "pending" | "running" | "done" | "failed";
+  target?: string | null;
 }
 
 type Handler = (
@@ -51,7 +52,8 @@ let _channel: RealtimeChannel | null = null;
  * degradation, same pattern as the other db/ modules).
  */
 export async function startCommandSubscription(
-  ctx: CommandHandlerContext
+  ctx: CommandHandlerContext,
+  botSource?: string,
 ): Promise<void> {
   if (_channel) {
     console.warn("[Commands] Subscription already started — ignoring");
@@ -69,12 +71,19 @@ export async function startCommandSubscription(
   }
 
   // 1. Startup sweep — process any commands that arrived while bot was down.
+  //    If botSource is set, only process commands targeting this bot (or untargeted).
   try {
-    const { data: pending, error } = await supabase
+    let sweepQuery = supabase
       .from("bot_commands")
-      .select("id, type, payload, status")
+      .select("id, type, payload, status, target")
       .eq("status", "pending")
       .order("issued_at", { ascending: true });
+
+    if (botSource) {
+      sweepQuery = sweepQuery.or(`target.eq.${botSource},target.is.null`);
+    }
+
+    const { data: pending, error } = await sweepQuery;
 
     if (error) {
       console.error("[Commands] Startup sweep query failed:", error.message);
@@ -100,8 +109,8 @@ export async function startCommandSubscription(
       { event: "INSERT", schema: "public", table: "bot_commands" },
       (payload) => {
         const row = payload.new as CommandRow;
-        // Fire-and-forget — processCommand handles its own errors and writes
-        // result/error back to the row. Never throws to Realtime internals.
+        // Skip commands targeting a different bot
+        if (botSource && row.target && row.target !== botSource) return;
         processCommand(row, ctx).catch((err) =>
           console.error(`[Commands] processCommand threw for ${row.id}:`, err)
         );

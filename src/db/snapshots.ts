@@ -18,6 +18,8 @@ import { ConfluenceResult } from "../strategy/types";
 // market_snapshots
 // ---------------------------------------------------------------------------
 
+export type BotSource = "tv-bot" | "vps-bot";
+
 export interface MarketSnapshotInput {
   price: number;
   fundingRate: number | null;
@@ -27,6 +29,7 @@ export interface MarketSnapshotInput {
   snap1D: IndicatorSnapshot;
   /** Null if no signals this tick. */
   confluence: ConfluenceResult | null;
+  source?: BotSource;
 }
 
 /**
@@ -57,6 +60,7 @@ export async function writeMarketSnapshot(input: MarketSnapshotInput): Promise<v
     },
     macro_filter: getMacroFilterLabel(input.snap1D),
     confluence_score: input.confluence?.score ?? null,
+    source: input.source ?? "tv-bot",
   };
 
   try {
@@ -75,6 +79,7 @@ export async function writeMarketSnapshot(input: MarketSnapshotInput): Promise<v
 
 export interface RiskSnapshotInput {
   state: Readonly<RiskState>;
+  source?: BotSource;
 }
 
 export async function writeRiskSnapshot(input: RiskSnapshotInput): Promise<void> {
@@ -109,6 +114,7 @@ export async function writeRiskSnapshot(input: RiskSnapshotInput): Promise<void>
     // drawdown budget. 0 means "no trades yet today", which matches the
     // in-memory initial state.
     daily_start_bankroll: s.dailyStartBankroll,
+    source: input.source ?? "tv-bot",
   };
 
   try {
@@ -152,16 +158,22 @@ export interface HydratedRiskState {
  * or the query errors — the caller must fall back to initial state.
  * Never throws.
  */
-export async function loadLatestRiskState(): Promise<HydratedRiskState | null> {
+export async function loadLatestRiskState(source?: BotSource): Promise<HydratedRiskState | null> {
   const client = getSupabase();
   if (!client) return null;
 
   try {
-    const { data, error } = await client
+    let query = client
       .from("risk_snapshots")
       .select(
         "bankroll_usd, daily_pnl, weekly_pnl, daily_start_bankroll, consecutive_losses, paused_until, killed, kill_reason, taken_at",
-      )
+      );
+
+    if (source) {
+      query = query.eq("source", source);
+    }
+
+    const { data, error } = await query
       .order("taken_at", { ascending: false })
       .limit(1)
       .maybeSingle();
