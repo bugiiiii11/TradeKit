@@ -1,88 +1,72 @@
-# TradeKit VPS Bot — Tasks for Colleague
+# TradeKit — Colleague Tasks & Architecture Update
 
-> Created: 2026-04-18 (Session 21)
-> Status: 3 tasks pending
+> Updated: 2026-04-20 (Session 21)
 
-We built the VPS headless bot (runs alongside the desktop bot, separate wallet, shared database). Three things need doing before it can go live:
+## Completed Tasks
 
-1. **Supabase migration** — add columns for two-bot source tagging (2 min, SQL Editor)
-2. **New Hyperliquid API wallet** — separate wallet for the VPS bot (10 min, MetaMask)
-3. **TradingView indicator validation** — verify our local calculations match the chart (10 min, needs TV Desktop)
+- [x] Supabase migration (source columns) — done 2026-04-19
+- [x] New Hyperliquid API wallet — `0x71BA95B8C7DF0540C144dA46812954F94D7a21C3`, $4.44 funded
+- [ ] TradingView indicator validation — low priority now (see below)
 
-Details below.
+## Updated Architecture Decision
 
----
+**We're moving to a single VPS bot as the main production bot.** The TradingView desktop bot becomes a demo/presentation tool only (for Krown etc).
 
-## 1. Supabase Migration
-
-Go to the Supabase dashboard → **SQL Editor** and run this:
-
-```sql
-ALTER TABLE market_snapshots ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tv-bot';
-ALTER TABLE risk_snapshots ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tv-bot';
-ALTER TABLE positions ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tv-bot';
-ALTER TABLE bot_commands ADD COLUMN IF NOT EXISTS target text;
-CREATE INDEX IF NOT EXISTS idx_risk_snapshots_source_taken ON risk_snapshots (source, taken_at DESC);
+```
+┌─────────────────────────────────┐     ┌──────────────────────────────┐
+│  VPS Bot (PRODUCTION)           │     │  Desktop Bot (DEMO ONLY)     │
+│  src/main-headless.ts           │     │  src/main.ts                 │
+│  Hyperliquid WebSocket + local  │     │  TradingView MCP + CDP       │
+│  indicators. 24/7, no GUI.      │     │  Dry-run or small capital.   │
+│  Capital: $400-500              │     │  Capital: $0-100             │
+│  npm run start:headless         │     │  npm start                   │
+└─────────────────────────────────┘     └──────────────────────────────┘
 ```
 
-All existing rows automatically get `source = 'tv-bot'` (correct — they came from the desktop bot). If you have Claude with Supabase MCP, you can ask Claude to run this for you.
+**Strategy development workflow:**
+1. You (colleague) find patterns on TradingView visually
+2. Manual-trade them with $100 to validate
+3. Write down the rules (entry/exit/stop)
+4. We code them into the VPS bot as a new strategy
+5. Backtest on 12-24 months of Binance data
+6. If positive → enable in VPS bot for automated 24/7 execution
 
-To verify it worked:
+This way TradingView is a **research tool**, not a production dependency.
 
-```sql
-SELECT column_name, data_type, column_default 
-FROM information_schema.columns 
-WHERE table_name = 'risk_snapshots' AND column_name = 'source';
-```
+## What's Next
 
-Should return one row with `data_type = 'text'`, `column_default = 'tv-bot'`.
+### Immediate: Fund VPS wallet for live testing
 
----
+The VPS bot works (tested with your new wallet — connectivity confirmed). But $4.44 is below Hyperliquid's minimum order size (~$10 notional). To actually place trades:
 
-## 2. New Hyperliquid API Wallet
+**Send ~$100-400 more to the VPS wallet** (same Hyperliquid account, the agent wallet `0x71BA...` operates on the master account `0x3a8a...`).
 
-The VPS bot needs its own wallet so it trades independently from the desktop bot.
+Once funded: we start the bot live with S1+S2 strategies and monitor.
 
-**Steps:**
-1. Open MetaMask with the master wallet (`0x3a8a...C46`)
-2. Go to Hyperliquid → Settings → API Wallets
-3. Create a **new agent wallet** (trade-only, **no withdraw** permission)
-4. Save the new wallet's **private key** and **address**
-5. Fund it with **$500 USDC** from the master wallet
+### Low Priority: TradingView Validation
 
-**What to send back:**
-- New API wallet address (e.g. `0x...`)
-- Private key (send securely — goes in the VPS `.env` file, never committed to git)
+The indicator validation script (`validate_indicators.ts`) is nice-to-have but not blocking. We already confirmed correct parameters via backtesting (PMARP 20/350). If you have TradingView Desktop running sometime:
 
----
+1. Set PMARP indicator to: period=20, lookback=350
+2. Run `npx ts-node src/scripts/validate_indicators.ts`
+3. Share the output
 
-## 3. TradingView Indicator Validation
+But this can wait — it's verification, not blocking.
 
-We need to verify our locally computed indicators match TradingView's values — especially PMARP which we fixed this session.
+### Strategy Ideas (your domain)
 
-**Steps:**
-1. Launch TradingView Desktop with CDP enabled:
-   ```powershell
-   & "C:\Program Files\WindowsApps\TradingView.Desktop_*\TradingView.exe" --remote-debugging-port=9222
-   ```
-   (Or use `launch_tradingview.ps1` from the repo root)
+When you find interesting setups on TradingView, note:
+- Entry conditions (which indicators, what values, which timeframe)
+- Exit conditions (indicator-based? time-based? TP/SL?)
+- Stop distance (% from entry)
+- What timeframe you see it on
 
-2. Make sure the BTC/USDC chart has these indicators visible:
-   - 5× EMA (periods: 8, 13, 21, 55, 200) — in that order on the chart
-   - RSI (14)
-   - Stochastic RSI (14/14/3/3)
-   - BBWP (period 13, stdDev 1, lookback 252)
-   - **PMARP (period 20, lookback 350)** ← check these match on the chart
+We can then backtest it on 24 months of data and potentially add it to the VPS bot.
 
-3. Run the validation script from the repo root:
-   ```powershell
-   npx ts-node src/scripts/validate_indicators.ts
-   ```
+## Current Bot Status
 
-**What to send back:**
-- The full console output (prints a comparison table with PASS/FAIL per indicator)
-- If PMARP shows FAIL, note what PMARP settings are currently on the TradingView chart
-
----
-
-**Priority:** migration (1) is the quickest and most important. Wallet (2) and TV validation (3) can wait until you have time.
+- **Strategies active:** S1 (EMA Trend, 10x) + S2 (Mean Reversion, 8x)
+- **S3 disabled** — confirmed unprofitable over 484 days of backtesting
+- **PMARP:** fixed to period=20, lookback=350 (Strategy KB values)
+- **Backtest result (S1+S2, 379 days):** +$81.24 (+16.2%), Sharpe 3.55, max DD -4.8%
+- **Expected trades:** ~50-80 per year (~10 from S1, ~50 from S2)
