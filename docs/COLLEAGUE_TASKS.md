@@ -5,9 +5,13 @@
 ## Completed Tasks
 
 - [x] Supabase migration (source columns) — done 2026-04-19
-- [x] New Hyperliquid API wallet — `0x71BA95B8C7DF0540C144dA46812954F94D7a21C3` (under old master — see note below)
+- [x] Option A architecture (full separation) — chosen 2026-04-20
+- [x] New master wallet + agent wallet created — done 2026-04-20
+  - New Master: `0x5642A41938903483486085D3672535e3a7044110`
+  - New Agent (VPS Bot): `0x483dd299871d13551AD687E39c3F2Cd40D649369`
+  - Funded: 399 USDC in Perps account (ready to trade)
 - [ ] TradingView indicator validation — low priority (verification only, not blocking)
-- [ ] Wallet separation — choose Option A or B below
+- [x] Wallet separation — Option A selected
 
 ## Architecture Decision: Choose Your Path
 
