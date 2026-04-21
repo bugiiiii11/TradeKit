@@ -442,6 +442,8 @@ async function checkExits(
 // Daily digest (00:00 UTC)
 // ---------------------------------------------------------------------------
 
+const DIGEST_INTERVAL_MS = parseInt(process.env.DIGEST_INTERVAL_HOURS ?? "2", 10) * 3_600_000;
+
 function scheduleDailyDigest(): void {
   const fire = async () => {
     try {
@@ -449,7 +451,7 @@ function scheduleDailyDigest(): void {
       const s = getState();
       const positions = activePositions.length;
       const lines = [
-        "Daily Digest",
+        "Status Digest",
         `Balance: $${balance.toFixed(2)}`,
         `Daily PnL: ${s.dailyPnl >= 0 ? "+" : ""}$${s.dailyPnl.toFixed(2)}`,
         `Weekly PnL: ${s.weeklyPnl >= 0 ? "+" : ""}$${s.weeklyPnl.toFixed(2)}`,
@@ -459,25 +461,13 @@ function scheduleDailyDigest(): void {
       ];
       sendDiscord("status", lines.join("\n"), Colors.blue);
     } catch (err) {
-      console.error("[Bot-VPS] Daily digest error:", err);
+      console.error("[Bot-VPS] Digest error:", err);
     }
   };
 
-  const msUntilMidnightUTC = () => {
-    const now = new Date();
-    const next = new Date(now);
-    next.setUTCHours(0, 0, 0, 0);
-    if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
-    return next.getTime() - now.getTime();
-  };
-
-  setTimeout(() => {
-    void fire();
-    setInterval(() => void fire(), 24 * 60 * 60_000);
-  }, msUntilMidnightUTC());
-
-  const hoursUntil = (msUntilMidnightUTC() / 3_600_000).toFixed(1);
-  console.log(`[Bot-VPS] Daily digest scheduled (next in ${hoursUntil}h at 00:00 UTC)`);
+  setInterval(() => void fire(), DIGEST_INTERVAL_MS);
+  const hours = DIGEST_INTERVAL_MS / 3_600_000;
+  console.log(`[Bot-VPS] Status digest scheduled every ${hours}h`);
 }
 
 // ---------------------------------------------------------------------------
