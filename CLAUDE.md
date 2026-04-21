@@ -8,7 +8,10 @@
 - **Bankroll:** ~$500.26 USDC on Hyperliquid mainnet (Perps account)
 - **Master wallet:** `0x3a8a318097017aCE0db8276ea435F26DE8674C46` (MetaMask)
 - **API wallet:** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (trade-only, no withdraw)
+- **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` ($399 USDC, separate account)
+- **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
+- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S3 at 0.25x leverage
 - **Strategy:** BTC perps, S1+S2 active (S3 disabled — confirmed dead in 484-day backtest)
 - **Leverage:** S1=10x, S2=8x | **Sizing:** 5% margin-based
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)

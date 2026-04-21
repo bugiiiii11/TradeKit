@@ -12,12 +12,6 @@
 
 ---
 
-## What Was Done (Session 19) — VPS deployment planning
-
-1. **VPS deployment planning docs** — Created `IMPLEMENTATION_PLAN.md` and `docs/` with deployment roadmap for moving the bot from local PowerShell to a VPS.
-2. **Final handoff document + memory entries** — Updated handoff.md, decision log, session summary.
-3. **No bot code changes** — LIVE bot still running pre-reconciliation Session 18 code.
-
 ## What Was Done (Session 20) — Knowledge architecture restructuring
 
 1. **Created `CLAUDE.md`** — Permanent project context extracted from handoff.md. Auto-loaded every message.
@@ -25,45 +19,40 @@
 3. **Trimmed `handoff.md`** — From 1138 lines to ~200.
 4. **Initialized memory system** — Key project decisions and user preferences.
 
-## What Was Done (Session 21) — Phase 0 validation + Phase 1 headless bot
+## What Was Done (Session 21) — VPS headless bot: build → backtest → deploy → LIVE
 
-**Major session: built the complete VPS headless bot pipeline from scratch.**
+**Massive session: built, validated, and deployed the VPS headless bot end-to-end.**
 
 ### Phase 0: Validation Infrastructure
-1. **TimeframeAggregator** (`src/backtest/aggregator.ts`) — 15m → 1H/4H/1D candle aggregation, reusable for live WebSocket.
-2. **Indicator validation script** (`src/scripts/validate_indicators.ts`) — compares local indicators vs TradingView + PMARP parameter sweep. Blocked: needs TradingView Desktop (colleague to run).
-3. **Binance data pipeline** — `download_binance.ts` (24 months downloaded, 71K rows) + `binance-loader.ts` (CSV parser with microsecond→ms fix, TF aggregation).
-4. **Backtest corrections** — Fee fix (0.035%→0.045% taker, 0.09% RT), hourly funding rate modeling, configurable PMARP params, per-strategy enable/disable.
-5. **PMARP parameter sweep** — Tested (50,200), (20,350), (50,100) across 484 days. KB params (20,350) are optimal: portfolio Sharpe -0.42→+0.57. **Fixed defaults to (20,350).**
-6. **S1+S2 confirmation backtest** — With S3 disabled + PMARP (20,350): +$81.24 (+16.2%), Sharpe 3.55, max DD -4.8% over 379 days.
+1. **TimeframeAggregator** (`src/backtest/aggregator.ts`) — 15m → 1H/4H/1D candle aggregation.
+2. **Binance data pipeline** — 24 months downloaded (71K rows), CSV parser with microsecond→ms fix.
+3. **Backtest corrections** — Fee fix (0.035%→0.045%), hourly funding rate, configurable PMARP, per-strategy enable/disable.
+4. **PMARP parameter sweep** — (50,200) vs (20,350) vs (50,100) across 484 days. **KB params (20,350) are optimal.** Fixed defaults.
+5. **S1+S2 confirmation backtest** — +$81.24 (+16.2%), Sharpe 3.55, max DD -4.8% over 379 days. S3 confirmed dead (556 trades, 29% win, -$60).
 
 ### Phase 1: Headless Bot
-7. **Promoted indicators** — `src/indicators/calculator.ts` (shared by both bots + backtest). Old `backtest/indicators.ts` re-exports.
-8. **WebSocket candle consumer** (`src/ws/candle-consumer.ts`) — 15m subscription via SDK `SubscriptionClient`, 600-bar buffer, bar-close detection (t-field advancing), heartbeat (30s), reconnect on 60s stale, REST gap-fill.
-9. **Headless entry point** (`src/main-headless.ts`) — Event-driven (on bar close), ENABLED_STRATEGIES env var (default S1,S2), PMARP (20,350) hardcoded, source tagging.
-10. **Tested locally** — `DRY_RUN=true npm run start:headless` — REST warmup, WS subscribe, indicator computation, strategy evaluation all working.
+6. **Promoted indicators** to `src/indicators/calculator.ts` (shared by both bots + backtest).
+7. **WebSocket candle consumer** (`src/ws/candle-consumer.ts`) — 15m subscription, 600-bar buffer, bar-close detection, heartbeat/reconnect, REST gap-fill.
+8. **Headless entry point** (`src/main-headless.ts`) — Event-driven, PMARP (20,350), source tagging.
 
-### Supabase Source Separation
-11. **Source tagging** — `market_snapshots`, `risk_snapshots`, `positions` get `source` column. `bot_commands` gets `target` column. `loadLatestRiskState()` filters by source.
-12. **Migration script** (`src/scripts/migrate_source_columns.ts`) — SQL ready. **Must run in Supabase SQL Editor before deploying VPS bot.**
+### Supabase + Architecture
+9. **Source separation** — `source` column on market_snapshots, risk_snapshots, positions. `target` on bot_commands. Risk state hydration filters by source.
+10. **Migration script** + colleague ran SQL successfully.
+11. **Architecture decision:** VPS bot = production, TV desktop bot = demo/Krown only.
 
-### Docs & Config
-13. **CLAUDE.md updated** — Two-bot architecture, headless infra, PMARP fix, S3 disabled, new scripts.
-14. **Implementation plan rewritten** — `docs/IMPLEMENTATION_PLAN.md` reflects two-bot architecture (additive, not replacement).
-15. **npm script added** — `npm run start:headless`
+### Wallet Separation (Option A)
+12. **New master wallet:** `0x5642A41938903483486085D3672535e3a7044110` ($399 USDC)
+13. **New agent wallet:** `0x483dd299871d13551AD687E39c3F2Cd40D649369`
+14. Fully independent from desktop bot master (`0x3a8a...`).
 
-### Key Findings
-- **S1 is the best strategy** — +$63-81 over 379-484 days, 57-70% win rate, but only ~10-14 trades/year.
-- **S2 nearly breakeven** with correct PMARP (20,350) — was -$29 with wrong params, now -$0.49.
-- **S3 is confirmed dead** — 556 trades, 29% win rate, -$60. Disabled.
-- **Two-bot architecture** — VPS bot is additive, separate wallet, shared Supabase.
+### VPS Deployment (LIVE)
+15. **Deployed to OCI ARM #2** (`170.9.253.98`) via pm2 (id=5, `trading-bot`).
+16. **All 3 strategies enabled** at 0.25x leverage (S1=2.5x, S2=2.0x, S3=1.3x) for data collection.
+17. **Discord notifications** in `#tradekit` — trade entries/exits, errors, status digest every 2h.
+18. **Tested locally + on VPS** — WebSocket, indicators, Supabase, commands all verified.
 
-### Commits (5, all pushed)
-- `d397500` Phase 0: validation infrastructure + two-bot architecture
-- `8d7e458` PMARP fix (50,200→20,350) + strategy enable/disable + parameter sweep
-- `e1900b3` Phase 1: headless entry point + WebSocket candle consumer
-- `cbc26ee` Supabase source separation for two-bot architecture
-- `06f5f49` Migration script + npm start:headless + CLAUDE.md update
+### Commits (10+, all pushed to main)
+Key commits: `d397500` (Phase 0), `8d7e458` (PMARP fix), `e1900b3` (Phase 1), `cbc26ee` (source separation), `857fb33` (reduced leverage), `6ab3b39` (Discord), `77a414e` (2h digest).
 
 ---
 
@@ -73,19 +62,17 @@
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-04-14 | Desktop bot needs restart for commit `0155e74` | Running pre-reconciliation code. Native TP/SL detection + manual trade tracking not active. | Ctrl+C PS window → `$env:DRY_RUN="false"; npm start` |
-| 2026-04-18 | Supabase migration pending | Source/target columns not yet added. VPS bot will fail on Supabase writes until migration runs. | Run SQL from `migrate_source_columns.ts` in Supabase SQL Editor |
-| 2026-04-18 | TradingView indicator validation pending | Blocked on colleague having TV Desktop. Confirms local indicators match chart. | Colleague runs `validate_indicators.ts` with TV + CDP |
+| 2026-04-21 | VPS bot LIVE on OCI2 | Running with $399, 0.25x leverage, all 3 strategies. Monitor Discord #tradekit for trades/errors. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
+| 2026-04-14 | Desktop bot needs restart for commit `0155e74` | Running pre-reconciliation code. Low priority now — VPS bot is the main bot. | Ctrl+C PS window → `$env:DRY_RUN="false"; npm start` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Run Supabase migration** | low | Paste SQL from `migrate_source_columns.ts` into SQL Editor. Required before VPS bot goes live. |
-| 2 | **Restart desktop bot** | low | Still running pre-reconciliation code from Session 18. |
-| 3 | **Create VPS API wallet** | low | Colleague creates new Hyperliquid agent wallet, funds with $500. |
-| 4 | **TradingView indicator validation** | low | Colleague runs `validate_indicators.ts`. Confirms PMARP (20,350) matches chart. |
-| 5 | **Deploy headless bot to OCI VPS** | med | Clone repo, `npm install`, `.env.vps` with new wallet key, `pm2 start`. |
-| 6 | **Phase 2: testnet paper trading** | med | Run VPS bot on testnet for 2-3 weeks, >15 trades. |
-| 7 | **S2 entry tuning** | med | S2 at 40% win rate with correct PMARP. Investigate losing trades — tighter BBWP or PMARP threshold? |
-| 8 | **S1 entry loosening** | med | Only ~10 trades/year. Can EMA alignment be relaxed (3 of 4 instead of all 4)? |
+| 1 | **Monitor VPS bot for first trade** | low | S3 should fire within 1-2 days, S2 within a week. Watch Discord #tradekit. |
+| 2 | **Scale up leverage after 10-15 trades** | low | Change `LEVERAGE_MULT=1.0` in VPS `.env` → `pm2 restart trading-bot` |
+| 3 | **TradingView indicator validation** | low | Nice-to-have. Colleague runs `validate_indicators.ts` when TV Desktop available. |
+| 4 | **S2 entry tuning** | med | S2 at 40% win rate. Investigate losing trades — tighter BBWP or PMARP threshold? |
+| 5 | **S1 entry loosening** | med | Only ~10 trades/year. Can EMA alignment be relaxed? |
+| 6 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
+| 7 | **Desktop bot for Krown demo** | low | Already works. Run with `DRY_RUN=true` when needed for presentation. |

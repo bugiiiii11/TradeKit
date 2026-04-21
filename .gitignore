@@ -28,6 +28,7 @@ data/bt-data/
 backtest-results/
 backtest-results.json
 emergency-snapshot.md
+___temp/
 
 # Debug / logs
 debug.log
