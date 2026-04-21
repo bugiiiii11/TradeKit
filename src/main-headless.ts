@@ -53,9 +53,12 @@ const STARTING_BANKROLL = parseFloat(process.env.BANKROLL ?? "500");
 const DRY_RUN = (process.env.DRY_RUN ?? "false").toLowerCase() === "true";
 const BOT_SOURCE = "vps-bot";
 
-const ENABLED_STRATEGIES = (process.env.ENABLED_STRATEGIES ?? "S1,S2")
+const ENABLED_STRATEGIES = (process.env.ENABLED_STRATEGIES ?? "S1,S2,S3")
   .split(",")
   .map(s => s.trim());
+
+// Leverage multiplier for reduced-risk deployment (0.25 = quarter leverage)
+const LEVERAGE_MULT = parseFloat(process.env.LEVERAGE_MULT ?? "0.25");
 
 let lastS1EvalTime = 0;
 let lastS2EvalTime = 0;
@@ -145,7 +148,8 @@ async function onBarClose(snapshots: {
 
     // 7. Confluence scoring
     const confluence = scoreSignals(signals, snap1D);
-    const tradeLeverage = getLeverageForSignals(signals);
+    const rawLeverage = getLeverageForSignals(signals);
+    const tradeLeverage = Math.max(1, Math.round(rawLeverage * LEVERAGE_MULT * 10) / 10);
 
     // 8. Write snapshots to Supabase
     await writeMarketSnapshot({
@@ -429,6 +433,7 @@ async function main(): Promise<void> {
   console.log("[Bot-VPS] Starting BTC Trading Bot (Headless)...");
   console.log(`[Bot-VPS] Mode: ${DRY_RUN ? "DRY RUN" : "LIVE"}`);
   console.log(`[Bot-VPS] Strategies: ${ENABLED_STRATEGIES.join(", ")}`);
+  console.log(`[Bot-VPS] Leverage multiplier: ${LEVERAGE_MULT}x (S1=${(10*LEVERAGE_MULT).toFixed(1)}x, S2=${(8*LEVERAGE_MULT).toFixed(1)}x, S3=${(5*LEVERAGE_MULT).toFixed(1)}x)`);
   console.log(`[Bot-VPS] Bankroll: $${STARTING_BANKROLL}`);
   console.log(`[Bot-VPS] Source tag: ${BOT_SOURCE}`);
 
