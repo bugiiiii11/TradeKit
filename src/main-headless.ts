@@ -439,6 +439,48 @@ async function checkExits(
 }
 
 // ---------------------------------------------------------------------------
+// Daily digest (00:00 UTC)
+// ---------------------------------------------------------------------------
+
+function scheduleDailyDigest(): void {
+  const fire = async () => {
+    try {
+      const balance = await getBalance();
+      const s = getState();
+      const positions = activePositions.length;
+      const lines = [
+        "Daily Digest",
+        `Balance: $${balance.toFixed(2)}`,
+        `Daily PnL: ${s.dailyPnl >= 0 ? "+" : ""}$${s.dailyPnl.toFixed(2)}`,
+        `Weekly PnL: ${s.weeklyPnl >= 0 ? "+" : ""}$${s.weeklyPnl.toFixed(2)}`,
+        `Open positions: ${positions}`,
+        `Consecutive losses: ${s.consecutiveLosses}`,
+        `Status: ${s.killed ? "KILLED" : s.pausedUntil > Date.now() ? "PAUSED" : "ACTIVE"}`,
+      ];
+      sendDiscord("status", lines.join("\n"), Colors.blue);
+    } catch (err) {
+      console.error("[Bot-VPS] Daily digest error:", err);
+    }
+  };
+
+  const msUntilMidnightUTC = () => {
+    const now = new Date();
+    const next = new Date(now);
+    next.setUTCHours(0, 0, 0, 0);
+    if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+    return next.getTime() - now.getTime();
+  };
+
+  setTimeout(() => {
+    void fire();
+    setInterval(() => void fire(), 24 * 60 * 60_000);
+  }, msUntilMidnightUTC());
+
+  const hoursUntil = (msUntilMidnightUTC() / 3_600_000).toFixed(1);
+  console.log(`[Bot-VPS] Daily digest scheduled (next in ${hoursUntil}h at 00:00 UTC)`);
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -509,9 +551,13 @@ async function main(): Promise<void> {
     Colors.blue,
   );
 
+  // Daily digest at 00:00 UTC
+  scheduleDailyDigest();
+
   // Graceful shutdown
   const shutdown = async (sig: string) => {
     console.warn(`[Bot-VPS] Received ${sig} — shutting down`);
+    sendDiscord("status", `Bot shutting down (${sig})`, Colors.orange);
     await consumer.stop();
     await stopCommandSubscription().catch(() => {});
     process.exit(0);
