@@ -48,6 +48,7 @@ import { initLogSink } from "./db/logs";
 import { startCommandSubscription, stopCommandSubscription } from "./db/commands";
 import { printPortfolioStats } from "./logger/portfolio";
 import { Signal } from "./strategy/types";
+import { initDiscord, sendDiscord, Colors } from "./notifications/discord";
 
 const STARTING_BANKROLL = parseFloat(process.env.BANKROLL ?? "500");
 const DRY_RUN = (process.env.DRY_RUN ?? "false").toLowerCase() === "true";
@@ -275,8 +276,14 @@ async function onBarClose(snapshots: {
       confluence_score: confluence.score,
       notes: `tx: ${txSig} | source: ${BOT_SOURCE}`,
     });
+
+    sendDiscord("trades",
+      `${confluence.direction.toUpperCase()} ${primarySignal.strategy} opened\nEntry: $${entryPrice.toFixed(0)}\nSize: ${sizing.positionBase.toFixed(5)} BTC ($${sizing.positionUsd.toFixed(0)} notional)\nLeverage: ${tradeLeverage}x | SL: $${stopPrice.toFixed(0)}`,
+      confluence.direction === "long" ? Colors.green : Colors.red,
+    );
   } catch (err) {
     console.error("[Bot-VPS] Bar evaluation error:", err);
+    sendDiscord("errors", `Bar evaluation error\n${err instanceof Error ? err.message : String(err)}`, Colors.red);
   }
 }
 
@@ -348,6 +355,10 @@ async function reconcilePositions(livePositions: PositionInfo[]): Promise<void> 
 
       activePositions.splice(i, 1);
       console.log(`[Bot-VPS] Native close logged: PnL $${pnlUsd.toFixed(2)}, reason: ${exitReason}`);
+      sendDiscord("trades",
+        `${pos.strategy} ${pos.direction} native close\nExit: $${exitPrice.toFixed(0)} | ${exitReason}\nPnL: ${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)}`,
+        pnlUsd >= 0 ? Colors.green : Colors.orange,
+      );
     } catch (err) {
       console.error("[Bot-VPS] Reconciliation error:", err);
     }
@@ -416,6 +427,10 @@ async function checkExits(
 
         activePositions.splice(i, 1);
         console.log(`[Bot-VPS] Exited ${pos.strategy} ${pos.direction} — ${exitReason}, PnL: $${pnlUsd.toFixed(2)}`);
+        sendDiscord("trades",
+          `${pos.strategy} ${pos.direction} CLOSED\nExit: $${exitPrice.toFixed(0)} | Reason: ${exitReason}\nPnL: ${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)}`,
+          pnlUsd >= 0 ? Colors.green : Colors.orange,
+        );
       } catch (err) {
         console.error(`[Bot-VPS] Exit error for ${pos.strategy}:`, err);
       }
@@ -429,6 +444,11 @@ async function checkExits(
 
 async function main(): Promise<void> {
   initLogSink();
+  initDiscord({
+    trades: process.env.DISCORD_WEBHOOK_TRADES || undefined,
+    errors: process.env.DISCORD_WEBHOOK_ERRORS || undefined,
+    status: process.env.DISCORD_WEBHOOK_STATUS || undefined,
+  }, "TradeKit VPS");
 
   console.log("[Bot-VPS] Starting BTC Trading Bot (Headless)...");
   console.log(`[Bot-VPS] Mode: ${DRY_RUN ? "DRY RUN" : "LIVE"}`);
@@ -484,6 +504,10 @@ async function main(): Promise<void> {
 
   await consumer.start();
   console.log("[Bot-VPS] WebSocket consumer running — waiting for bar closes...");
+  sendDiscord("status",
+    `Bot started\nStrategies: ${ENABLED_STRATEGIES.join(", ")}\nLeverage: ${LEVERAGE_MULT}x (S1=${(10*LEVERAGE_MULT).toFixed(1)}x, S2=${(8*LEVERAGE_MULT).toFixed(1)}x, S3=${(5*LEVERAGE_MULT).toFixed(1)}x)\nBalance: $${STARTING_BANKROLL}`,
+    Colors.blue,
+  );
 
   // Graceful shutdown
   const shutdown = async (sig: string) => {
