@@ -150,7 +150,8 @@ async function onBarClose(snapshots: {
     // 7. Confluence scoring
     const confluence = scoreSignals(signals, snap1D);
     const rawLeverage = getLeverageForSignals(signals);
-    const tradeLeverage = Math.max(1, Math.round(rawLeverage * LEVERAGE_MULT * 10) / 10);
+    // Hyperliquid requires integer leverage
+    const tradeLeverage = Math.max(1, Math.round(rawLeverage * LEVERAGE_MULT));
 
     // 8. Write snapshots to Supabase
     await writeMarketSnapshot({
@@ -485,7 +486,7 @@ async function main(): Promise<void> {
   console.log("[Bot-VPS] Starting BTC Trading Bot (Headless)...");
   console.log(`[Bot-VPS] Mode: ${DRY_RUN ? "DRY RUN" : "LIVE"}`);
   console.log(`[Bot-VPS] Strategies: ${ENABLED_STRATEGIES.join(", ")}`);
-  console.log(`[Bot-VPS] Leverage multiplier: ${LEVERAGE_MULT}x (S1=${(10*LEVERAGE_MULT).toFixed(1)}x, S2=${(8*LEVERAGE_MULT).toFixed(1)}x, S3=${(5*LEVERAGE_MULT).toFixed(1)}x)`);
+  console.log(`[Bot-VPS] Leverage multiplier: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x)`);
   console.log(`[Bot-VPS] Bankroll: $${STARTING_BANKROLL}`);
   console.log(`[Bot-VPS] Source tag: ${BOT_SOURCE}`);
 
@@ -537,7 +538,7 @@ async function main(): Promise<void> {
   await consumer.start();
   console.log("[Bot-VPS] WebSocket consumer running — waiting for bar closes...");
   sendDiscord("status",
-    `Bot started\nStrategies: ${ENABLED_STRATEGIES.join(", ")}\nLeverage: ${LEVERAGE_MULT}x (S1=${(10*LEVERAGE_MULT).toFixed(1)}x, S2=${(8*LEVERAGE_MULT).toFixed(1)}x, S3=${(5*LEVERAGE_MULT).toFixed(1)}x)\nBalance: $${STARTING_BANKROLL}`,
+    `Bot started\nStrategies: ${ENABLED_STRATEGIES.join(", ")}\nLeverage: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x)\nBalance: $${STARTING_BANKROLL}`,
     Colors.blue,
   );
 

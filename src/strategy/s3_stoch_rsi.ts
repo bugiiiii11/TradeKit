@@ -56,37 +56,48 @@ function checkStochCross(
 ): Signal | null {
   if (!prev15m) return null;
 
-  const { stochK, stochD, rsi14, close, ema21 } = snap15m;
+  const { stochK, stochD, rsi14, close } = snap15m;
   const prevK = prev15m.stochK;
   const prevD = prev15m.stochD;
 
-  // Detect %K/%D crossover
   const bullishCross = prevK <= prevD && stochK > stochD;
   const bearishCross = prevK >= prevD && stochK < stochD;
 
-  // BBWP filter — skip entries in high-volatility regimes
-  if (snap1H.bbwp >= S3_BBWP_MAX) return null;
+  if (!bullishCross && !bearishCross) return null;
 
-  // Long: %K crosses above %D from below 20 (oversold recovery)
+  const crossDir = bullishCross ? "bull" : "bear";
+  const bbwpOk = snap1H.bbwp < S3_BBWP_MAX;
+  const oversold = stochK < 20 && stochD < 20;
+  const overbought = stochK > 80 && stochD > 80;
+  const nearEma21Long = isNearOrAboveEMA21(close, snap1H.ema21);
+  const nearEma21Short = isNearOrBelowEMA21(close, snap1H.ema21);
+  const rsiLong = rsi14 >= 30 && rsi14 <= 50;
+  const rsiShort = rsi14 >= 50 && rsi14 <= 70;
+
+  console.log(
+    `[S3-diag] Cross=${crossDir} K=${stochK.toFixed(1)} D=${stochD.toFixed(1)} ` +
+    `RSI=${rsi14.toFixed(1)} BBWP=${snap1H.bbwp.toFixed(1)}(${bbwpOk ? "ok" : "FAIL"}) ` +
+    `OB=${overbought} OS=${oversold} ` +
+    `EMA21=${nearEma21Long ? "ok" : "FAIL"}/${nearEma21Short ? "ok" : "FAIL"} ` +
+    `RSI-L=${rsiLong} RSI-S=${rsiShort}`
+  );
+
+  if (!bbwpOk) return null;
+
   if (
     bullishCross &&
-    stochK < 20 &&
-    stochD < 20 &&
-    isNearOrAboveEMA21(close, snap1H.ema21) &&
-    rsi14 >= 30 &&
-    rsi14 <= 50
+    oversold &&
+    nearEma21Long &&
+    rsiLong
   ) {
     return { direction: "long", strategy: "S3", stopDistancePct: S3_STOP_DISTANCE };
   }
 
-  // Short: %K crosses below %D from above 80 (overbought reversal)
   if (
     bearishCross &&
-    stochK > 80 &&
-    stochD > 80 &&
-    isNearOrBelowEMA21(close, snap1H.ema21) &&
-    rsi14 >= 50 &&
-    rsi14 <= 70
+    overbought &&
+    nearEma21Short &&
+    rsiShort
   ) {
     return { direction: "short", strategy: "S3", stopDistancePct: S3_STOP_DISTANCE };
   }
