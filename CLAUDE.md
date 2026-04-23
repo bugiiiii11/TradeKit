@@ -16,6 +16,7 @@
 - **Leverage:** S1=10x, S2=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
 - **S3 diagnostics:** enabled (Session 22) — logs every StochRSI cross with filter results
+- **Discord signals:** `#tradekit-signals` channel — S1/S2/S3 diagnostics + risk manager blocks
 - **GitHub:** `github.com/bugiiiii11/TradeKit` | **Vercel:** `trade-kit.vercel.app`
 - **Supabase:** project `gseztkzguxasfwqnztuo` | 11 tables, RLS enabled
 
@@ -38,7 +39,7 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 
 **Bot core:** `src/main.ts` (desktop bot, TV MCP loop), `src/main-headless.ts` (VPS bot, WebSocket event-driven), `src/mcp/client.ts` (MCP with retry/reconnect), `src/tradingview/reader.ts` (multi-TF snapshots)
 
-**Headless infra:** `src/ws/candle-consumer.ts` (15m WS subscription, 600-bar buffer, bar-close detection, heartbeat/reconnect, REST gap-fill), `src/indicators/calculator.ts` (shared EMA/RSI/StochRSI/BBWP/PMARP), `src/backtest/aggregator.ts` (15m→1H/4H/1D)
+**Headless infra:** `src/ws/candle-consumer.ts` (15m WS subscription, 1500-bar buffer + 4H/1D REST warmup, bar-close detection, heartbeat/reconnect, REST gap-fill), `src/indicators/calculator.ts` (shared EMA/RSI/StochRSI/BBWP/PMARP), `src/backtest/aggregator.ts` (15m→1H/4H/1D)
 
 **Hyperliquid:** `src/hyperliquid/client.ts` (SDK init), `account.ts` (balance, positions, funding, fills), `orders.ts` (market/limit, SL/TP, scaled TPs, stop cleanup, isolated margin)
 
