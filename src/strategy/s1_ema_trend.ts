@@ -12,6 +12,7 @@
 
 import { IndicatorSnapshot } from "../tradingview/reader";
 import { Signal } from "./types";
+import { sendDiscord, Colors } from "../notifications/discord";
 
 /**
  * S1 stop-loss is placed below/above EMA55 — typically 2–4%.
@@ -63,12 +64,13 @@ function checkCross(
   const isBearish = ema8 < ema55;
   const shortCross = !wasBearish && isBearish;
 
-  console.log(
-    `[S1-diag] EMA8${isBullish ? ">" : "<"}EMA55 cross=${longCross ? "LONG" : shortCross ? "SHORT" : "none"} ` +
+  const diagMsg =
+    `EMA8${isBullish ? ">" : "<"}EMA55 cross=${longCross ? "LONG" : shortCross ? "SHORT" : "none"} ` +
     `EMA13${ema13 > ema55 ? ">" : "<"}55 EMA21${ema21 > ema55 ? ">" : "<"}55 ` +
     `4H-EMA200=${Number.isNaN(ema200) ? "NaN" : (close > ema200 ? "above" : "below")} ` +
-    `Daily-EMA200=${Number.isNaN(snapDaily.ema200) ? "NaN" : (aboveMacro ? "above" : "below")}`
-  );
+    `Daily-EMA200=${Number.isNaN(snapDaily.ema200) ? "NaN" : (aboveMacro ? "above" : "below")}`;
+  console.log(`[S1-diag] ${diagMsg}`);
+  sendDiscord("signals", `S1 4H Eval\n${diagMsg}`, Colors.orange);
 
   if (
     longCross &&

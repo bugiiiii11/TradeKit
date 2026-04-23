@@ -481,6 +481,7 @@ async function main(): Promise<void> {
     trades: process.env.DISCORD_WEBHOOK_TRADES || undefined,
     errors: process.env.DISCORD_WEBHOOK_ERRORS || undefined,
     status: process.env.DISCORD_WEBHOOK_STATUS || undefined,
+    signals: process.env.DISCORD_WEBHOOK_SIGNALS || undefined,
   }, "TradeKit VPS");
 
   console.log("[Bot-VPS] Starting BTC Trading Bot (Headless)...");

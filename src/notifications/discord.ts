@@ -9,7 +9,7 @@
 const MIN_GAP_MS = 500;
 const MAX_RETRIES = 2;
 
-export type DiscordChannel = "trades" | "errors" | "status";
+export type DiscordChannel = "trades" | "errors" | "status" | "signals";
 
 export const Colors = {
   green: 0x2ecc71,

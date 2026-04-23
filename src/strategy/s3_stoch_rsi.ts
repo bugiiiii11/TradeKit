@@ -14,6 +14,7 @@
 
 import { IndicatorSnapshot } from "../tradingview/reader";
 import { Signal } from "./types";
+import { sendDiscord, Colors } from "../notifications/discord";
 
 const S3_STOP_DISTANCE = 0.004; // 0.4% — midpoint of 0.3–0.5% range
 
@@ -74,13 +75,14 @@ function checkStochCross(
   const rsiLong = rsi14 >= 30 && rsi14 <= 50;
   const rsiShort = rsi14 >= 50 && rsi14 <= 70;
 
-  console.log(
-    `[S3-diag] Cross=${crossDir} K=${stochK.toFixed(1)} D=${stochD.toFixed(1)} ` +
+  const diagMsg =
+    `Cross=${crossDir} K=${stochK.toFixed(1)} D=${stochD.toFixed(1)} ` +
     `RSI=${rsi14.toFixed(1)} BBWP=${snap1H.bbwp.toFixed(1)}(${bbwpOk ? "ok" : "FAIL"}) ` +
     `OB=${overbought} OS=${oversold} ` +
     `EMA21=${nearEma21Long ? "ok" : "FAIL"}/${nearEma21Short ? "ok" : "FAIL"} ` +
-    `RSI-L=${rsiLong} RSI-S=${rsiShort}`
-  );
+    `RSI-L=${rsiLong} RSI-S=${rsiShort}`;
+  console.log(`[S3-diag] ${diagMsg}`);
+  sendDiscord("signals", `S3 StochRSI Cross\n${diagMsg}`, Colors.gold);
 
   if (!bbwpOk) return null;
 

@@ -16,6 +16,7 @@
 
 import { IndicatorSnapshot } from "../tradingview/reader";
 import { Signal } from "./types";
+import { sendDiscord, Colors } from "../notifications/discord";
 
 const S2_STOP_DISTANCE = 0.015; // 1.5% — midpoint of 1–2% range
 
@@ -39,13 +40,14 @@ export function evaluateS2(
   const retestBelow = isRetestFromBelow(close, ema55);
   const ema55Dist = ema55 !== 0 ? ((close - ema55) / ema55 * 100).toFixed(2) : "?";
 
-  console.log(
-    `[S2-diag] BBWP=${bbwp?.toFixed(1) ?? "NaN"}(${bbwpOk ? "ok" : "FAIL"}) ` +
+  const diagMsg =
+    `BBWP=${bbwp?.toFixed(1) ?? "NaN"}(${bbwpOk ? "ok" : "FAIL"}) ` +
     `PMARP=${pmarp?.toFixed(1) ?? "NaN"} RSI=${rsi14?.toFixed(1) ?? "NaN"} ` +
     `Trend=${trendBullish ? "bull" : trendBearish ? "bear" : "flat"} ` +
     `EMA55dist=${ema55Dist}% retest=${retestAbove ? "above" : retestBelow ? "below" : "none"} ` +
-    `1H-EMA=${ema21 > ema55 ? "bull" : "bear"}`
-  );
+    `1H-EMA=${ema21 > ema55 ? "bull" : "bear"}`;
+  console.log(`[S2-diag] ${diagMsg}`);
+  sendDiscord("signals", `S2 Hourly Eval\n${diagMsg}`, Colors.blue);
 
   if (!bbwpOk) return null;
 
