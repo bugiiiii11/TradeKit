@@ -54,6 +54,16 @@
 ### Commits (10+, all pushed to main)
 Key commits: `d397500` (Phase 0), `8d7e458` (PMARP fix), `e1900b3` (Phase 1), `cbc26ee` (source separation), `857fb33` (reduced leverage), `6ab3b39` (Discord), `77a414e` (2h digest).
 
+## What Was Done (Session 22) — Fix 422 leverage error + S3 diagnostics
+
+1. **Fixed 422 leverage error** — Hyperliquid API rejects non-integer leverage. The 0.25x multiplier produced decimals (e.g. S3: 5×0.25=1.25→1.3x). Changed to `Math.round()` for integers (S3→1x, S2→2x, S1→3x). File: `src/main-headless.ts`. Committed: `334b47d`.
+2. **Added S3 diagnostic logging** — Every StochRSI cross now logs all filter conditions (BBWP, OB/OS, EMA21 proximity, RSI range) with pass/fail flags. Will reveal why signals are so rare vs desktop bot. File: `src/strategy/s3_stoch_rsi.ts`. Committed: `334b47d`.
+3. **Deployed to VPS** — `git pull && npm run build && pm2 restart trading-bot`. Bot confirmed running with new code.
+
+**Key finding:** The bot DID generate a signal at 06:45 UTC on 2026-04-23 but failed at `ensureLeverage` with HTTP 422 before placing the order. The leverage fix should unblock actual trade execution.
+
+**Open question:** Are locally-computed indicators diverging from TradingView? S3 generated ~1.15 trades/day in backtest but nearly zero live. Diagnostics will answer this.
+
 ---
 
 ## Watchlist
@@ -69,10 +79,11 @@ Key commits: `d397500` (Phase 0), `8d7e458` (PMARP fix), `e1900b3` (Phase 1), `c
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Monitor VPS bot for first trade** | low | S3 should fire within 1-2 days, S2 within a week. Watch Discord #tradekit. |
-| 2 | **Scale up leverage after 10-15 trades** | low | Change `LEVERAGE_MULT=1.0` in VPS `.env` → `pm2 restart trading-bot` |
-| 3 | **TradingView indicator validation** | low | Nice-to-have. Colleague runs `validate_indicators.ts` when TV Desktop available. |
-| 4 | **S2 entry tuning** | med | S2 at 40% win rate. Investigate losing trades — tighter BBWP or PMARP threshold? |
-| 5 | **S1 entry loosening** | med | Only ~10 trades/year. Can EMA alignment be relaxed? |
-| 6 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
-| 7 | **Desktop bot for Krown demo** | low | Already works. Run with `DRY_RUN=true` when needed for presentation. |
+| 1 | **Check S3 diagnostics (~1h after deploy)** | low | SSH into VPS, grep for `[S3-diag]`. See which filters block signals most. |
+| 2 | **Investigate indicator divergence if diagnostics show issues** | med | If BBWP/StochRSI values look wrong vs TradingView, run `validate_indicators.ts`. |
+| 3 | **Relax S3 thresholds if market regime is the blocker** | med | If BBWP consistently >40, consider raising S3_BBWP_MAX. Backtest first. |
+| 4 | **Scale up leverage after 10-15 trades** | low | Change `LEVERAGE_MULT=1.0` in VPS `.env` → `pm2 restart trading-bot` |
+| 5 | **S2 entry tuning** | med | S2 at 40% win rate. Investigate losing trades — tighter BBWP or PMARP threshold? |
+| 6 | **S1 entry loosening** | med | Only ~10 trades/year. Can EMA alignment be relaxed? |
+| 7 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
+| 8 | **Desktop bot for Krown demo** | low | Already works. Run with `DRY_RUN=true` when needed for presentation. |

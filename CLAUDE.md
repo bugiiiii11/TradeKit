@@ -13,8 +13,9 @@
 - **Network:** mainnet | **Mode:** LIVE
 - **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S3 at 0.25x leverage
 - **Strategy:** BTC perps, S1+S2 active (S3 disabled — confirmed dead in 484-day backtest)
-- **Leverage:** S1=10x, S2=8x | **Sizing:** 5% margin-based
+- **Leverage:** S1=10x, S2=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
+- **S3 diagnostics:** enabled (Session 22) — logs every StochRSI cross with filter results
 - **GitHub:** `github.com/bugiiiii11/TradeKit` | **Vercel:** `trade-kit.vercel.app`
 - **Supabase:** project `gseztkzguxasfwqnztuo` | 11 tables, RLS enabled
 
@@ -97,7 +98,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - `calcMarginBasedSize` / per-strategy leverage / S3 scaled TPs under live conditions
 - Kill switch close-all with real open LIVE positions
 - Native TP trigger execution + partial fill cascade on Hyperliquid
-- Reconciliation (`reconcilePositions`) — code pushed but bot not yet restarted with it
+- Reconciliation (`reconcilePositions`) — deployed on VPS (Session 22 restart)
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
 
 **Operational:**
