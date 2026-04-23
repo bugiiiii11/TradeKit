@@ -203,6 +203,10 @@ async function onBarClose(snapshots: {
     const permission = canTrade(sizing);
     if (!permission.allowed) {
       console.log(`[Bot-VPS] Trade blocked: ${permission.reason}`);
+      sendDiscord("signals",
+        `Trade BLOCKED by risk manager\n${primarySignal.strategy} ${confluence.direction} — ${permission.reason}`,
+        Colors.red,
+      );
       return;
     }
 
