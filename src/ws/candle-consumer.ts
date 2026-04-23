@@ -21,7 +21,9 @@ import { aggregateTo1H, aggregateTo4H, aggregateTo1D } from "../backtest/aggrega
 import type { Candle, BarData } from "../backtest/types";
 import type { IndicatorSnapshot, Timeframe } from "../tradingview/reader";
 
-const BUFFER_SIZE = 700;
+// 1500 bars of 15m = 375 bars of 1H (enough for BBWP=264, PMARP=369)
+// and ~93 bars of 4H (enough for EMA55). Previously 700 → 1H BBWP/PMARP were always NaN.
+const BUFFER_SIZE = 1500;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const STALE_TIMEOUT_MS = 60_000;
 const MS_15M = 15 * 60_000;
