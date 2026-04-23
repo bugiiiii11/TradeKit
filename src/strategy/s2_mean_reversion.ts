@@ -29,33 +29,42 @@ export function evaluateS2(
   snap1H: IndicatorSnapshot,
   snap4H: IndicatorSnapshot
 ): Signal | null {
-  // Use 4H for trend direction context, 1H for entry conditions
   const trendBullish = snap4H.ema21 > snap4H.ema55;
   const trendBearish = snap4H.ema21 < snap4H.ema55;
 
   const { close, ema21, ema55, rsi14, bbwp, pmarp } = snap1H;
 
-  // Shared volatility/compression gate (both directions)
-  if (bbwp >= 35) return null;
+  const bbwpOk = bbwp < 35;
+  const retestAbove = isRetestFromAbove(close, ema55);
+  const retestBelow = isRetestFromBelow(close, ema55);
+  const ema55Dist = ema55 !== 0 ? ((close - ema55) / ema55 * 100).toFixed(2) : "?";
 
-  // Long entry
+  console.log(
+    `[S2-diag] BBWP=${bbwp?.toFixed(1) ?? "NaN"}(${bbwpOk ? "ok" : "FAIL"}) ` +
+    `PMARP=${pmarp?.toFixed(1) ?? "NaN"} RSI=${rsi14?.toFixed(1) ?? "NaN"} ` +
+    `Trend=${trendBullish ? "bull" : trendBearish ? "bear" : "flat"} ` +
+    `EMA55dist=${ema55Dist}% retest=${retestAbove ? "above" : retestBelow ? "below" : "none"} ` +
+    `1H-EMA=${ema21 > ema55 ? "bull" : "bear"}`
+  );
+
+  if (!bbwpOk) return null;
+
   if (
     trendBullish &&
     pmarp < 50 &&
-    isRetestFromAbove(close, ema55) &&
-    ema21 > ema55 && // 1H trend also bullish
+    retestAbove &&
+    ema21 > ema55 &&
     rsi14 >= 35 &&
     rsi14 <= 55
   ) {
     return { direction: "long", strategy: "S2", stopDistancePct: S2_STOP_DISTANCE };
   }
 
-  // Short entry
   if (
     trendBearish &&
     pmarp > 50 &&
-    isRetestFromBelow(close, ema55) &&
-    ema21 < ema55 && // 1H trend also bearish
+    retestBelow &&
+    ema21 < ema55 &&
     rsi14 >= 45 &&
     rsi14 <= 65
   ) {

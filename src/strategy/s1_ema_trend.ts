@@ -50,11 +50,9 @@ function checkCross(
 ): Signal | null {
   const { close, ema8, ema13, ema21, ema55, ema200 } = snap4H;
 
-  // Macro filter: Daily EMA200
   const aboveMacro = snapDaily.close > snapDaily.ema200;
   const belowMacro = snapDaily.close < snapDaily.ema200;
 
-  // Cross detection: requires a previous snapshot
   if (!prev4H) return null;
 
   const wasBullish = prev4H.ema8 > prev4H.ema55;
@@ -65,7 +63,13 @@ function checkCross(
   const isBearish = ema8 < ema55;
   const shortCross = !wasBearish && isBearish;
 
-  // Long entry: fresh bullish cross + alignment + macro filter
+  console.log(
+    `[S1-diag] EMA8${isBullish ? ">" : "<"}EMA55 cross=${longCross ? "LONG" : shortCross ? "SHORT" : "none"} ` +
+    `EMA13${ema13 > ema55 ? ">" : "<"}55 EMA21${ema21 > ema55 ? ">" : "<"}55 ` +
+    `4H-EMA200=${Number.isNaN(ema200) ? "NaN" : (close > ema200 ? "above" : "below")} ` +
+    `Daily-EMA200=${Number.isNaN(snapDaily.ema200) ? "NaN" : (aboveMacro ? "above" : "below")}`
+  );
+
   if (
     longCross &&
     ema13 > ema55 &&
@@ -76,7 +80,6 @@ function checkCross(
     return { direction: "long", strategy: "S1", stopDistancePct: S1_STOP_DISTANCE };
   }
 
-  // Short entry: fresh bearish cross + alignment + macro filter
   if (
     shortCross &&
     ema13 < ema55 &&

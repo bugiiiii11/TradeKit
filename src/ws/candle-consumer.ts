@@ -69,6 +69,8 @@ function barToSnapshot(bar: BarData, timeframe: Timeframe): IndicatorSnapshot {
 
 export class CandleConsumer {
   private buffer: Candle[] = [];
+  private warmup4H: Candle[] = [];
+  private warmup1D: Candle[] = [];
   private currentOpenTime = 0;
   private transport: hl.WebSocketTransport | null = null;
   private subsClient: hl.SubscriptionClient | null = null;
@@ -85,13 +87,22 @@ export class CandleConsumer {
   async start(): Promise<void> {
     this.running = true;
 
-    // 1. REST warmup — fetch 700 bars of 15m history
-    console.log("[WS] Fetching historical 15m candles for warmup...");
+    // 1. REST warmup — fetch 15m + higher-TF candles in parallel
+    console.log("[WS] Fetching historical candles for warmup...");
     const endMs = Date.now();
     const startMs = endMs - BUFFER_SIZE * MS_15M;
-    const candles = await fetchCandles("15m", startMs, endMs);
+    const [candles, candles4H, candles1D] = await Promise.all([
+      fetchCandles("15m", startMs, endMs),
+      fetchCandles("4H", endMs - 250 * 4 * 3_600_000, endMs),
+      fetchCandles("1D", endMs - 250 * 24 * 3_600_000, endMs),
+    ]);
     this.buffer = candles.slice(-BUFFER_SIZE);
-    console.log(`[WS] Warmup complete: ${this.buffer.length} bars loaded`);
+    this.warmup4H = candles4H;
+    this.warmup1D = candles1D;
+    console.log(
+      `[WS] Warmup complete: ${this.buffer.length} 15m, ` +
+      `${candles4H.length} 4H, ${candles1D.length} 1D bars loaded`
+    );
 
     if (this.buffer.length > 0) {
       this.currentOpenTime = this.buffer[this.buffer.length - 1].timestamp;
@@ -189,8 +200,12 @@ export class CandleConsumer {
 
     // Aggregate higher timeframes from 15m buffer
     const candles1H = aggregateTo1H(this.buffer);
-    const candles4H = aggregateTo4H(this.buffer);
-    const candles1D = aggregateTo1D(this.buffer);
+    const agg4H = aggregateTo4H(this.buffer);
+    const agg1D = aggregateTo1D(this.buffer);
+
+    // Merge warmup candles (pre-buffer history) with aggregated candles
+    const candles4H = this.mergeWarmup(this.warmup4H, agg4H);
+    const candles1D = this.mergeWarmup(this.warmup1D, agg1D);
 
     // Compute indicators
     const params = this.config.indicatorParams;
@@ -215,6 +230,13 @@ export class CandleConsumer {
       snap4H: barToSnapshot(last4H, "4H"),
       snap1D: barToSnapshot(last1D, "1D"),
     });
+  }
+
+  private mergeWarmup(warmup: Candle[], aggregated: Candle[]): Candle[] {
+    if (warmup.length === 0 || aggregated.length === 0) return aggregated;
+    const firstAggTs = aggregated[0].timestamp;
+    const historical = warmup.filter(c => c.timestamp < firstAggTs);
+    return [...historical, ...aggregated];
   }
 
   private startHeartbeat(): void {
