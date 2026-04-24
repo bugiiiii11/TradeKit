@@ -82,12 +82,14 @@ Key commits: `d397500` (Phase 0), `8d7e458` (PMARP fix), `e1900b3` (Phase 1), `c
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Monitor Discord #tradekit-signals for pattern** | low | Watch diagnostics for 1-2 days. See which filters block signals most. All strategies now have real indicator values. |
-| 2 | **Wait for first trade** | low | All 3 strategies functional now. S3 fires on StochRSI crosses with BBWP<40. S2 needs price near EMA55 + BBWP<35. |
+| 1 | **Monitor Discord #tradekit-signals for pattern** | low | Watch diagnostics for 1-2 days. First S3 trade already fired. S2 almost fired (macro filter blocked). |
+| 2 | **Fix Supabase trades_source_check** | low | Colleague ran the SQL fix (2026-04-24). Verify closed trades record correctly. |
 | 3 | **Tune thresholds if no trades after 3-5 days** | med | If BBWP/PMARP consistently block, consider relaxing. Backtest first. |
 | 4 | **Scale up leverage after 10-15 trades** | low | Change `LEVERAGE_MULT=1.0` in VPS `.env` → `pm2 restart trading-bot` |
 | 5 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
 | 6 | **S2 entry tuning** | med | S2 at 40% win rate. Investigate losing trades — tighter BBWP or PMARP threshold? |
 | 7 | **S1 entry loosening** | med | Only ~10 trades/year. Can EMA alignment be relaxed? |
 | 8 | **Remove diagnostic logging when stable** | low | Once trading consistently, remove S1/S2/S3 diag sends (or keep signals channel muted). |
+| 9 | **S4 Grid strategy research** | med | Backtest grid on 24-month BTC data with funding rates. Port Flash regime filter concept. See auto-memory for full analysis. |
+| 10 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
 | 9 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
