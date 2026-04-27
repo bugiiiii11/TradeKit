@@ -26,6 +26,7 @@ import type { IndicatorSnapshot, Timeframe } from "../tradingview/reader";
 const BUFFER_SIZE = 1500;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const STALE_TIMEOUT_MS = 60_000;
+const MAX_RECONNECT_ATTEMPTS = 10;
 const MS_15M = 15 * 60_000;
 
 export interface CandleConsumerConfig {
@@ -79,6 +80,7 @@ export class CandleConsumer {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private config: CandleConsumerConfig;
   private running = false;
+  private reconnectAttempts = 0;
 
   constructor(config: CandleConsumerConfig) {
     this.config = config;
@@ -152,6 +154,7 @@ export class CandleConsumer {
 
   private onCandleMessage(hlCandle: HLCandle): void {
     this.lastMessageTime = Date.now();
+    this.reconnectAttempts = 0;
     const candle = hlCandleToCandle(hlCandle);
 
     if (candle.timestamp === this.currentOpenTime) {
@@ -245,7 +248,14 @@ export class CandleConsumer {
 
       const staleDuration = Date.now() - this.lastMessageTime;
       if (staleDuration > STALE_TIMEOUT_MS) {
-        console.warn(`[WS] No message in ${(staleDuration / 1000).toFixed(0)}s — reconnecting...`);
+        this.reconnectAttempts++;
+        console.warn(`[WS] No message in ${(staleDuration / 1000).toFixed(0)}s — reconnect attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+
+        if (this.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+          console.error(`[WS] ${MAX_RECONNECT_ATTEMPTS} reconnect attempts failed — exiting for pm2 restart`);
+          process.exit(1);
+        }
+
         await this.reconnect();
       }
     }, HEARTBEAT_INTERVAL_MS);

@@ -10,7 +10,7 @@
  *   Consecutive loss limit:         3  → pause 4h, review
  */
 
-import { getState, triggerPause } from "./state";
+import { getState, triggerPause, resetConsecutiveLosses } from "./state";
 import { SizingResult } from "./sizing";
 
 // TEMP week-1 LIVE cap — was 3 per KB. Restore after first week of LIVE.
@@ -93,9 +93,11 @@ export function canTrade(sizing: SizingResult): TradePermission {
     };
   }
 
-  // Consecutive loss limit
+  // Consecutive loss limit — pause once, then reset counter so the bot
+  // resumes after the cool-off period instead of looping forever.
   if (state.consecutiveLosses >= CONSECUTIVE_LOSS_LIMIT) {
     triggerPause(PAUSE_CONSECUTIVE_MS);
+    resetConsecutiveLosses();
     return {
       allowed: false,
       reason: `${CONSECUTIVE_LOSS_LIMIT} consecutive losses — pausing 4h for review`,

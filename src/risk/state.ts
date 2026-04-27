@@ -111,6 +111,11 @@ export function setKilled(reason: string): void {
   _state.totalExposureUsd = 0;
 }
 
+/** Reset consecutive loss counter (called after pause is triggered). */
+export function resetConsecutiveLosses(): void {
+  _state.consecutiveLosses = 0;
+}
+
 /** Deactivate the kill switch so the bot resumes normal evaluation. */
 export function clearKilled(): void {
   _state.killed = false;
