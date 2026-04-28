@@ -45,6 +45,8 @@ const HANDLERS: Record<string, Handler> = {
 };
 
 let _channel: RealtimeChannel | null = null;
+let _lastRealtimeStatus: string | null = null;
+let _realtimeErrorCount = 0;
 
 /**
  * Starts the command subscription. Idempotent — a second call is a no-op.
@@ -118,14 +120,24 @@ export async function startCommandSubscription(
     )
     .subscribe((status, err) => {
       if (status === "SUBSCRIBED") {
-        console.log("[Commands] Realtime subscription active");
+        const msg = _realtimeErrorCount > 0
+          ? `[Commands] Realtime subscription active (recovered after ${_realtimeErrorCount} retries)`
+          : "[Commands] Realtime subscription active";
+        console.log(msg);
+        _realtimeErrorCount = 0;
+        _lastRealtimeStatus = status;
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        console.error(
-          `[Commands] Realtime subscription ${status}`,
-          err ? `: ${err.message}` : ""
-        );
+        _realtimeErrorCount++;
+        if (_lastRealtimeStatus !== status) {
+          console.error(
+            `[Commands] Realtime subscription ${status}`,
+            err ? `: ${err.message}` : ""
+          );
+        }
+        _lastRealtimeStatus = status;
       } else if (status === "CLOSED") {
         console.warn("[Commands] Realtime subscription closed");
+        _lastRealtimeStatus = status;
       }
     });
 }
