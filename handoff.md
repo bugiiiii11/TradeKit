@@ -12,18 +12,30 @@
 
 ---
 
-## What Was Done (Session 22) — Fix all strategies broken (NaN indicators) + Discord signals
+## What Was Done (Session 24) — S3 regime filter backtest
 
-**Root cause found:** VPS bot was running for 2+ days with every strategy silently broken due to insufficient warmup data producing NaN indicators. Zero trades were possible.
+### Health Check
+VPS bot healthy: 107 bar closes (~27h uptime), WS stable, risk state clean (bankroll=$398.94, consecutiveLosses=0, no pause). Ghost positions resolved on pm2 restart. Diagnostics flowing with real values (BBWP, PMARP, StochRSI). No trades since restart — filters correctly blocking.
 
-### Fixes (5 commits, all deployed to VPS)
-1. **Fixed 422 leverage error** — Hyperliquid requires integer leverage. 0.25x multiplier produced 1.3x for S3. Changed to `Math.round()`. Committed: `334b47d`.
-2. **Fixed 1H BBWP/PMARP always NaN** — 700 bars of 15m = 175 bars of 1H, but BBWP needs 264 and PMARP needs 369. Increased buffer to 1500 (→375 bars of 1H). Committed: `cfc6923`.
-3. **Fixed S1 permanently dead** — 4H and 1D EMA200 need 200 bars, impossible from 15m aggregation alone. Added parallel REST fetch of 250 bars of 4H + 1D candles during warmup, merged with aggregated data. Committed: `95b71cc`.
-4. **Added S1/S2/S3 diagnostic logging** — Each strategy logs filter conditions with pass/fail on every evaluation. Committed: `334b47d` (S3), `95b71cc` (S1/S2).
-5. **Discord `#tradekit-signals` channel** — All diagnostics + risk manager trade blocks routed to new Discord channel. Color-coded: S1=orange, S2=blue, S3=gold, risk blocks=red. Committed: `31b90a5`, `1813677`.
+### S3 Regime Filter A/B Backtest
+Adapted Flash's `regimeFilter.ts` (5d/21d daily EMA trend detection) to block S3 entries in trending markets. Ran 379-day comparison on 24-month Binance data:
 
-**Confirmed working:** First S2 diagnostic post-fix showed `BBWP=27.8(ok) PMARP=62.9` — real values, not NaN. Warmup loads 1500 15m + 251 4H + 251 1D bars.
+| Metric | Baseline | Filtered | Delta |
+|--------|----------|----------|-------|
+| Trades | 779 | 686 | -93 |
+| Winners | 229 | 203 | -26 |
+| Losers | 550 | 483 | **-67** |
+| Win rate | 29.4% | 29.6% | +0.2pp |
+| Total PnL | -$81.95 | -$71.09 | **+$10.85** |
+| Max drawdown | 16.5% | 14.4% | **-2.1pp** |
+
+**Key finding:** Filter removes 93 trades (67 losers, 26 winners — 2.6:1 kill ratio), saves $11.56. But S3 remains deeply negative regardless. Filter is a clear improvement but doesn't fix the core issue.
+
+**Verdict:** Adopt filter as shared infra for S4 grid (where Flash originally used it). Keep S3 disabled in production.
+
+**Files:** `src/backtest/regime-filter.ts` (new), `src/scripts/backtest_regime.ts` (new A/B comparison), engine.ts + types.ts updated. Committed: `8fa1207`.
+
+---
 
 ## What Was Done (Session 23) — Fix consecutive-loss infinite pause + dead WebSocket
 
@@ -65,21 +77,17 @@ Committed `9677532`, pushed to main, pulled on VPS, built, pm2 restarted. Bot im
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-04-27 | VPS bot restarted with Session 23 fixes | Both consecutive-loss fix + WS max-retry deployed. Monitor Discord #tradekit for trades/errors + #tradekit-signals for diagnostics resuming. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
-| 2026-04-27 | Ghost position cleanup | Portfolio stats showed "2 open" but Hyperliquid has 0. Reconciliation should auto-clean on next bar close. Verify in Discord or pm2 logs. | Check for `[Bot-VPS] Detected native close` messages in logs |
-| 2026-04-14 | Desktop bot needs restart for commit `0155e74` | Running pre-reconciliation code. Low priority — VPS bot is primary. | Ctrl+C PS window → `$env:DRY_RUN="false"; npm start` |
+| 2026-04-27 | VPS bot running Session 23 fixes | S24 health check confirmed healthy (27h uptime, diagnostics flowing, no errors). Keep monitoring Discord #tradekit-signals. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Monitor post-restart behavior** | low | Confirm diagnostics flowing in #tradekit-signals, ghost positions cleaned up, WS stays connected. Give it 24h. |
-| 2 | **S3 regime filter research** | med | Backtest S3 with daily EMA trend overlay (5d/21d from Flash's `regimeFilter.ts`). S3's 1H BBWP misses multi-day trends — 4 consecutive losses were S3 scalping against a trend. Could share filter infra with S4 grid later. |
+| 1 | **S4 Grid strategy research** | med | Regime filter now exists as shared infra (`src/backtest/regime-filter.ts`). Build grid strategy on Hyperliquid perps, backtest on 24-month Binance data with funding rates + regime filter. See auto-memory for full analysis. |
+| 2 | **Scale up leverage after 10-15 trades** | low | Change `LEVERAGE_MULT=1.0` in VPS `.env` → `pm2 restart trading-bot`. Early stats: 4.54x R:R at 33% WR — viable edge but tiny PnL at 1x. |
 | 3 | **Verify Supabase trades_source_check** | low | Colleague ran the SQL fix (2026-04-24). Verify closed trades record correctly after next trade closes. |
-| 4 | **Scale up leverage after 10-15 trades** | low | Change `LEVERAGE_MULT=1.0` in VPS `.env` → `pm2 restart trading-bot`. Early stats: 4.54x R:R at 33% WR — viable edge but tiny PnL at 1x. |
-| 5 | **S4 Grid strategy research** | med | Build natively on Hyperliquid perps. Backtest grid on 24-month Binance data with funding rates. Port Flash regime filter as shared infra (S3 + S4). See auto-memory for full analysis. |
+| 4 | **S2 entry tuning** | med | S2 at 40% win rate. Currently blocked by BBWP=88.9 (correct behavior). Revisit when market calms. |
+| 5 | **S1 entry loosening** | med | Only ~10 trades/year. Can EMA alignment be relaxed? |
 | 6 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
-| 7 | **S2 entry tuning** | med | S2 at 40% win rate. Currently blocked by BBWP=88.9 (correct behavior). Revisit when market calms. |
-| 8 | **S1 entry loosening** | med | Only ~10 trades/year. Can EMA alignment be relaxed? |
-| 9 | **Remove diagnostic logging when stable** | low | Once trading consistently, remove S1/S2/S3 diag sends (or keep signals channel muted). |
-| 10 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
+| 7 | **Remove diagnostic logging when stable** | low | Once trading consistently, remove S1/S2/S3 diag sends (or keep signals channel muted). |
+| 8 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
