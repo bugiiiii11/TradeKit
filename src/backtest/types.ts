@@ -83,6 +83,17 @@ export interface BacktestConfig {
   marginPct: number;
   /** Which strategies are enabled. Default: all three. */
   enabledStrategies?: StrategyId[];
+  /** Enable daily EMA regime filter for S3 entries. */
+  regimeFilter?: boolean;
+}
+
+/** A signal that was blocked by the regime filter. */
+export interface FilteredSignal {
+  timestamp: number;
+  strategy: StrategyId;
+  direction: Direction;
+  regime: string;
+  price: number;
 }
 
 export interface BacktestStats {
@@ -113,4 +124,6 @@ export interface BacktestResult {
   trades: BacktestTrade[];
   equityCurve: Array<{ timestamp: number; equity: number }>;
   stats: BacktestStats;
+  /** Signals blocked by the regime filter (only populated when regimeFilter=true). */
+  filteredSignals?: FilteredSignal[];
 }

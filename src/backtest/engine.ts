@@ -23,6 +23,7 @@ import { evaluateS2, resetS2State } from "../strategy/s2_mean_reversion";
 import { evaluateS3, resetS3State, S3_MIN_HOLD_MS } from "../strategy/s3_stoch_rsi";
 import { scoreSignals, getLeverageForSignals } from "../strategy/confluence";
 import type { IndicatorSnapshot, Timeframe } from "../tradingview/reader";
+import { computeRegimeMap, type RegimeInfo } from "./regime-filter";
 import type {
   AlignedBar,
   BarData,
@@ -30,6 +31,7 @@ import type {
   BacktestResult,
   BacktestTrade,
   Direction,
+  FilteredSignal,
   OpenPosition,
   StrategyId,
 } from "./types";
@@ -220,6 +222,7 @@ export function runBacktest(
   resetS3State();
 
   const trades: BacktestTrade[] = [];
+  const filteredSignals: FilteredSignal[] = [];
   let equity = config.bankroll;
   const equityCurve: Array<{ timestamp: number; equity: number }> = [
     { timestamp: alignedBars[0].bar15m.timestamp, equity },
@@ -229,6 +232,20 @@ export function runBacktest(
   let activeStrategies = "";
   let accumulatedFunding = 0;
   let lastFundingHour = -1;
+
+  // Regime filter: extract unique daily bars and pre-compute regime map
+  let regimeMap: Map<number, RegimeInfo> | null = null;
+  if (config.regimeFilter) {
+    const seenDaily = new Set<number>();
+    const uniqueDailyBars: BarData[] = [];
+    for (const ab of alignedBars) {
+      if (!seenDaily.has(ab.bar1D.timestamp)) {
+        seenDaily.add(ab.bar1D.timestamp);
+        uniqueDailyBars.push(ab.bar1D);
+      }
+    }
+    regimeMap = computeRegimeMap(uniqueDailyBars);
+  }
 
   // Engine-tracked prev bars (for exit cross detection)
   let prev15m: BarData | null = null;
@@ -293,6 +310,25 @@ export function runBacktest(
             ?? rawSignals.find(s => s.strategy === "S2")
             ?? rawSignals[0];
 
+          // Regime filter: block S3 entries in trending markets
+          if (regimeMap && primary.strategy === "S3") {
+            const regime = regimeMap.get(bar1D.timestamp);
+            if (regime?.trending) {
+              filteredSignals.push({
+                timestamp: bar15m.timestamp,
+                strategy: "S3",
+                direction: dir,
+                regime: regime.regime,
+                price: bar15m.close,
+              });
+              // Skip to next bar — don't open position
+              prev15m = bar15m;
+              prev4H = bar4H;
+              prev1H = bar1H;
+              continue;
+            }
+          }
+
           const stopDistPct = primary.stopDistancePct;
           const marginUsd   = equity * config.marginPct;
           const notionalUsd = marginUsd * leverage;
@@ -344,6 +380,7 @@ export function runBacktest(
     trades,
     equityCurve,
     stats: computeStats(trades, config.bankroll, equityCurve),
+    filteredSignals: config.regimeFilter ? filteredSignals : undefined,
   };
 }
 
