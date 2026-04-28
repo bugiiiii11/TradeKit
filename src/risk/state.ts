@@ -184,8 +184,10 @@ export function hydrateState(h: RiskStateHydration): void {
     // Weekly state survives the week.
     weeklyPnl: sameWeek ? h.weeklyPnl : 0,
     lastWeeklyReset: sameWeek ? sourceWeekStr : weekStr,
-    // Loss streak is a running count — carry it over regardless.
-    consecutiveLosses: h.consecutiveLosses,
+    // Loss streak carries over, but if the counter is at/above the pause
+    // threshold and the pause already expired, the cool-off was served —
+    // reset so canTrade() doesn't re-trigger on the first signal.
+    consecutiveLosses: (h.consecutiveLosses >= 3 && h.pausedUntil <= Date.now()) ? 0 : h.consecutiveLosses,
     // Expired pauses don't linger after restart.
     pausedUntil: h.pausedUntil > Date.now() ? h.pausedUntil : 0,
     // Kill switch persists — a manual kill should survive a crash/restart.
