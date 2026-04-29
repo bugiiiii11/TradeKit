@@ -30,6 +30,12 @@ export const S3_MIN_HOLD_MS = 45 * 60 * 1000; // 45 minutes (3 bars)
  *  High BBWP = wide bands = trending/volatile → StochRSI crosses are noise. */
 export const S3_BBWP_MAX = 40;
 
+/** Configurable thresholds for backtesting — modify before runBacktest() */
+export const S3_CONFIG = {
+  obThreshold: 80,
+  osThreshold: 20,
+};
+
 /** Price must be within this % of EMA21 to qualify as "near" it */
 const EMA21_PROXIMITY_THRESHOLD = 0.005; // 0.5%
 
@@ -68,8 +74,8 @@ function checkStochCross(
 
   const crossDir = bullishCross ? "bull" : "bear";
   const bbwpOk = snap1H.bbwp < S3_BBWP_MAX;
-  const oversold = stochK < 20 && stochD < 20;
-  const overbought = stochK > 80 && stochD > 80;
+  const oversold = stochK < S3_CONFIG.osThreshold && stochD < S3_CONFIG.osThreshold;
+  const overbought = stochK > S3_CONFIG.obThreshold && stochD > S3_CONFIG.obThreshold;
   const nearEma21Long = isNearOrAboveEMA21(close, snap1H.ema21);
   const nearEma21Short = isNearOrBelowEMA21(close, snap1H.ema21);
   const rsiLong = rsi14 >= 30 && rsi14 <= 50;

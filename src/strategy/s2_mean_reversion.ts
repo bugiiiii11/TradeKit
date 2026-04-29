@@ -26,6 +26,11 @@ const S2_STOP_DISTANCE = 0.015; // 1.5% — midpoint of 1–2% range
  */
 const EMA55_RETEST_THRESHOLD = 0.005; // 0.5%
 
+/** Configurable options for backtesting — modify before runBacktest() */
+export const S2_CONFIG = {
+  require1hEma: true,
+};
+
 export function evaluateS2(
   snap1H: IndicatorSnapshot,
   snap4H: IndicatorSnapshot
@@ -51,11 +56,14 @@ export function evaluateS2(
 
   if (!bbwpOk) return null;
 
+  const ema1hBull = ema21 > ema55;
+  const ema1hBear = ema21 < ema55;
+
   if (
     trendBullish &&
     pmarp < 50 &&
     retestAbove &&
-    ema21 > ema55 &&
+    (!S2_CONFIG.require1hEma || ema1hBull) &&
     rsi14 >= 35 &&
     rsi14 <= 55
   ) {
@@ -66,7 +74,7 @@ export function evaluateS2(
     trendBearish &&
     pmarp > 50 &&
     retestBelow &&
-    ema21 < ema55 &&
+    (!S2_CONFIG.require1hEma || ema1hBear) &&
     rsi14 >= 45 &&
     rsi14 <= 65
   ) {
