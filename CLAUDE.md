@@ -78,6 +78,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 | `test_custom_trade.ts` | CLI manual trade with SL + scaled TPs |
 | `backtest.ts` | Strategy replay: `--days 90 --bankroll 500 --margin 5` |
 | `backtest_binance.ts` | 12-month replay: `--bankroll 500 --strategies S1,S2 --pmarp-period 20 --pmarp-lookback 350` |
+| `backtest_relaxed.ts` | A/B filter relaxation: S3 OB/OS 75/25, S2 no 1H-EMA, both — `--bankroll 500 --margin 5` |
 | `validate_indicators.ts` | Compare local indicators vs TradingView (needs TV Desktop + CDP) |
 | `download_binance.ts` | Download BTC 15m klines from Binance: `--months=24` |
 | `migrate_source_columns.ts` | Add source/target columns for two-bot architecture |

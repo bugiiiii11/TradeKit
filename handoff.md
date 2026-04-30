@@ -12,6 +12,34 @@
 
 ---
 
+## What Was Done (Session 25) — VPS deep dive + filter relaxation backtest
+
+### Supabase Realtime Log Noise Fix
+Investigated `[Commands] Realtime subscription CHANNEL_ERROR` flooding VPS error logs. The subscription auto-recovers via Supabase's built-in retry, but logged every single retry attempt. Fixed to only log state transitions (first error + recovery with retry count). Files: `src/db/commands.ts`. Committed: `e808d63`.
+
+### VPS Bot Deep Dive (~40h of logs)
+Bot healthy: 15h uptime, 182 bar closes, WebSocket stable, all 3 strategies evaluating. Zero trades — market conditions not meeting entry criteria:
+- **S3:** 28 crosses detected, 6 had BBWP<40, but OB/OS extremes never aligned with EMA21 proximity
+- **S2:** 20 evals, 7 had BBWP<35, but `1H-EMA=bear` in ALL 20 evaluations (never once bullish)
+- **S1:** One LONG cross detected but blocked by `Daily-EMA200=below`
+- BBWP spiked from 18 to 97.2 over 24h (massive vol expansion)
+
+### Filter Relaxation A/B Backtest
+Made S3 OB/OS thresholds and S2 1H-EMA requirement configurable (`S3_CONFIG`, `S2_CONFIG`). Ran 4-variant comparison on 379-day / 24-month Binance data:
+
+| Variant | Trades | Win Rate | PnL | Max DD | Verdict |
+|---------|--------|----------|-----|--------|---------|
+| Baseline | 474 | 30.4% | +$25.50 | 10.7% | Current |
+| S3 75/25 | 531 (+57) | 30.9% | +$22.79 | 11.0% | REJECT |
+| S2 no 1H-EMA | 477 (+3) | 30.4% | +$25.44 | 10.7% | REJECT |
+| Both | 532 (+58) | 31.0% | +$23.65 | 10.8% | REJECT |
+
+**All relaxations rejected.** Extra trades are net-negative. Current filters are already optimal. S1 remains the portfolio driver (10 trades, 70% WR, +$79).
+
+Files: `src/strategy/s2_mean_reversion.ts`, `src/strategy/s3_stoch_rsi.ts` (configurable thresholds), `src/scripts/backtest_relaxed.ts` (new). Committed: `3c35125`.
+
+---
+
 ## What Was Done (Session 24) — S3 regime filter backtest
 
 ### Health Check
@@ -77,7 +105,8 @@ Committed `9677532`, pushed to main, pulled on VPS, built, pm2 restarted. Bot im
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-04-27 | VPS bot running Session 23 fixes | S24 health check confirmed healthy (27h uptime, diagnostics flowing, no errors). Keep monitoring Discord #tradekit-signals. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
+| 2026-04-27 | VPS bot running Session 23 fixes | S25 deep dive confirmed healthy (15h uptime, 182 bar closes, WS stable). Zero trades — BBWP too high (97.2) and 1H-EMA bearish. Realtime log noise fixed (e808d63) but not yet deployed to VPS. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
+| 2026-04-30 | Deploy log noise fix to VPS | `e808d63` committed but VPS still runs old code. Non-urgent — only affects error log readability. | `ssh ... "cd ~/trading-bot && git pull && npm run build && pm2 restart trading-bot"` |
 
 ## What To Do Next
 
@@ -86,8 +115,8 @@ Committed `9677532`, pushed to main, pulled on VPS, built, pm2 restarted. Bot im
 | 1 | **S4 Grid strategy research** | med | Regime filter now exists as shared infra (`src/backtest/regime-filter.ts`). Build grid strategy on Hyperliquid perps, backtest on 24-month Binance data with funding rates + regime filter. See auto-memory for full analysis. |
 | 2 | **Scale up leverage after 10-15 trades** | low | Change `LEVERAGE_MULT=1.0` in VPS `.env` → `pm2 restart trading-bot`. Early stats: 4.54x R:R at 33% WR — viable edge but tiny PnL at 1x. |
 | 3 | **Verify Supabase trades_source_check** | low | Colleague ran the SQL fix (2026-04-24). Verify closed trades record correctly after next trade closes. |
-| 4 | **S2 entry tuning** | med | S2 at 40% win rate. Currently blocked by BBWP=88.9 (correct behavior). Revisit when market calms. |
-| 5 | **S1 entry loosening** | med | Only ~10 trades/year. Can EMA alignment be relaxed? |
+| 4 | ~~S2 entry tuning~~ | — | **RESOLVED (S25):** Backtest proved removing 1H-EMA adds only 5 trades, net -$0.70. Current filters optimal. |
+| 5 | ~~S1 entry loosening~~ | — | **RESOLVED (S25):** S1 is the portfolio star (70% WR, +$79/379d, 10 trades). No reason to relax. |
 | 6 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
 | 7 | **Remove diagnostic logging when stable** | low | Once trading consistently, remove S1/S2/S3 diag sends (or keep signals channel muted). |
 | 8 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
