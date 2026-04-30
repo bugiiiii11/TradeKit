@@ -178,18 +178,19 @@ export async function placeLimitOrder(
  * don't accumulate across trades. Cleanup failure is logged but does NOT
  * throw — a successful close must not be masked by a cleanup failure.
  */
-export async function closePosition(direction: OrderDirection): Promise<string> {
+export async function closePosition(direction: OrderDirection, skipStopCleanup = false): Promise<string> {
   const ctx = await getHyperliquidContext();
   const state = await ctx.info.clearinghouseState({ user: ctx.masterAddress });
   const btcPos = state.assetPositions.find((p) => p.position.coin === "BTC");
 
   if (!btcPos || parseFloat(btcPos.position.szi) === 0) {
     console.log("[Orders] No open BTC position to close");
-    // Still scrub stale stops — they're orphaned by definition if no position.
-    try {
-      await cancelOpenBtcStops();
-    } catch (err) {
-      console.warn("[Orders] Stop cleanup failed on empty-position path:", err);
+    if (!skipStopCleanup) {
+      try {
+        await cancelOpenBtcStops();
+      } catch (err) {
+        console.warn("[Orders] Stop cleanup failed on empty-position path:", err);
+      }
     }
     return "";
   }
@@ -226,13 +227,12 @@ export async function closePosition(direction: OrderDirection): Promise<string> 
 
   console.log(`[Orders] Closed ${direction} ${order.s} BTC | oid: ${oid}`);
 
-  // Cleanup orphaned reduce-only stops. Must not throw — the close succeeded
-  // and a cleanup failure leaves the position flat with a harmless orphaned
-  // stop (reduce-only on 0 position = no-op).
-  try {
-    await cancelOpenBtcStops();
-  } catch (err) {
-    console.warn("[Orders] Stop cleanup failed after close:", err);
+  if (!skipStopCleanup) {
+    try {
+      await cancelOpenBtcStops();
+    } catch (err) {
+      console.warn("[Orders] Stop cleanup failed after close:", err);
+    }
   }
 
   return oid;

@@ -33,7 +33,7 @@ import {
   getState,
   hydrateState,
 } from "./risk/state";
-import { placeMarketOrder, placeLimitOrder, closePosition, setStopLoss, setScaledTakeProfits } from "./hyperliquid/orders";
+import { placeMarketOrder, placeLimitOrder, closePosition, cancelOrder, setStopLoss, setScaledTakeProfits } from "./hyperliquid/orders";
 import { getBalance, getOpenPositions, getFundingRate, getUserFills } from "./hyperliquid/account";
 import type { PositionInfo } from "./hyperliquid/account";
 import { logTradeOpen, logTradeClose } from "./logger/trade_logger";
@@ -76,6 +76,8 @@ interface ActivePosition {
   leverage: number;
   confluenceScore: number;
   stopDistancePct: number;
+  stopOid?: string;
+  tpOids?: string[];
 }
 
 const activePositions: ActivePosition[] = [];
@@ -185,6 +187,18 @@ async function onBarClose(snapshots: {
       return;
     }
 
+    // 9b. Block if position already open (Hyperliquid has one isolated position per asset)
+    if (activePositions.length > 0) {
+      const existing = activePositions.map(p => `${p.strategy}:${p.direction}`).join(", ");
+      const incoming = signals.map(s => `${s.strategy}:${s.direction}`).join(", ");
+      console.log(`[Bot-VPS] Entry blocked — position already open (${existing})`);
+      sendDiscord("signals",
+        `Entry BLOCKED — position already open\n${incoming} signal skipped\nOpen: ${existing}`,
+        Colors.orange,
+      );
+      return;
+    }
+
     // 10. Sizing
     const primarySignal = signals.find(s => s.strategy === "S1")
       ?? signals.find(s => s.strategy === "S2")
@@ -230,12 +244,14 @@ async function onBarClose(snapshots: {
       txSig = await placeMarketOrder(confluence.direction, sizing.positionBase, tradeLeverage);
     }
 
+    let stopOid: string | undefined;
     if (!DRY_RUN) {
-      await setStopLoss(confluence.direction, stopPrice, sizing.positionBase);
+      stopOid = await setStopLoss(confluence.direction, stopPrice, sizing.positionBase);
     }
 
     // S3 TPs (only if S3 is enabled)
     let tpPrices: number[] = [];
+    let tpOids: string[] = [];
     if (primarySignal.strategy === "S3") {
       const tpTargets = [
         { pct: 0.01, portion: 0.33 },
@@ -246,7 +262,8 @@ async function onBarClose(snapshots: {
         confluence.direction === "long" ? entryPrice * (1 + pct) : entryPrice * (1 - pct)
       );
       if (!DRY_RUN) {
-        await setScaledTakeProfits(confluence.direction, entryPrice, sizing.positionBase, tpTargets);
+        const tpResults = await setScaledTakeProfits(confluence.direction, entryPrice, sizing.positionBase, tpTargets);
+        tpOids = tpResults.map(r => r.oid);
       }
     }
 
@@ -264,6 +281,8 @@ async function onBarClose(snapshots: {
       leverage: tradeLeverage,
       confluenceScore: confluence.score,
       stopDistancePct: primarySignal.stopDistancePct,
+      stopOid,
+      tpOids: tpOids.length > 0 ? tpOids : undefined,
     });
     recordTradeOpen(sizing.marginUsd);
 
@@ -402,7 +421,12 @@ async function checkExits(
         if (DRY_RUN) {
           console.log(`[DRY_RUN] Would CLOSE ${pos.strategy} ${pos.direction}`);
         } else {
-          await closePosition(pos.direction);
+          // Cancel this position's specific SL/TP orders first
+          const oidsToCancel = [pos.stopOid, ...(pos.tpOids ?? [])].filter(Boolean) as string[];
+          for (const oid of oidsToCancel) {
+            try { await cancelOrder(oid); } catch { /* already filled/canceled */ }
+          }
+          await closePosition(pos.direction, true);
         }
 
         const pnlUsd = pos.direction === "long"
