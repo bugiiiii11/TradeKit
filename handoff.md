@@ -38,6 +38,26 @@ Made S3 OB/OS thresholds and S2 1H-EMA requirement configurable (`S3_CONFIG`, `S
 
 Files: `src/strategy/s2_mean_reversion.ts`, `src/strategy/s3_stoch_rsi.ts` (configurable thresholds), `src/scripts/backtest_relaxed.ts` (new). Committed: `3c35125`.
 
+### Concurrent Position Bug Fixes (critical)
+Second VPS check revealed bot had started trading (first S2+S3 live trades!). Found two critical bugs:
+
+1. **Leverage conflict:** S3 (1x) couldn't open when S2 (2x) was open — Hyperliquid rejects leverage decreases on isolated positions. Crashed entire bar evaluation via `ensureLeverage`.
+2. **Stop cleanup nuke:** `closePosition` canceled ALL reduce-only BTC orders, including stops belonging to other strategies' open positions. Left S2 naked after S3 exit.
+
+**Root cause:** Hyperliquid has one isolated position per asset, but bot treated S2/S3 as independent positions.
+
+**Fixes:**
+- Block new entries when any position already open (`activePositions.length > 0` guard)
+- Track SL/TP order IDs per position (`stopOid`, `tpOids[]` on `ActivePosition`)
+- Cancel only that position's specific OIDs on exit, call `closePosition(dir, skipStopCleanup=true)`
+- `closePosition` gains `skipStopCleanup` param (default false — kill switch still gets blanket cleanup)
+
+Files: `src/main-headless.ts`, `src/hyperliquid/orders.ts`. Committed: `85255e2`. Deployed to VPS, pm2 restarted.
+
+**Trade results:** ~5 S2 shorts over 2 days, net loss -$1.64 at 0.25x leverage. Balance: $398.94 → $397.30. First live S2 trades confirmed working.
+
+**Known gap:** `activePositions` not hydrated from Hyperliquid on restart — bot opened a new S2 immediately after restart because it didn't know about existing positions. Pre-existing issue, low priority (positions have native stops).
+
 ---
 
 ## What Was Done (Session 24) — S3 regime filter backtest
@@ -105,8 +125,7 @@ Committed `9677532`, pushed to main, pulled on VPS, built, pm2 restarted. Bot im
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-04-27 | VPS bot running Session 23 fixes | S25 deep dive confirmed healthy (15h uptime, 182 bar closes, WS stable). Zero trades — BBWP too high (97.2) and 1H-EMA bearish. Realtime log noise fixed (e808d63) but not yet deployed to VPS. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
-| 2026-04-30 | Deploy log noise fix to VPS | `e808d63` committed but VPS still runs old code. Non-urgent — only affects error log readability. | `ssh ... "cd ~/trading-bot && git pull && npm run build && pm2 restart trading-bot"` |
+| 2026-05-01 | VPS bot running S25 bug fixes | Deployed `85255e2` (concurrent position fix + log noise fix). First live S2 trades completed, balance $397.30. Bot clean, no open positions, 1H-EMA flipped bull. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
 
 ## What To Do Next
 
@@ -115,8 +134,8 @@ Committed `9677532`, pushed to main, pulled on VPS, built, pm2 restarted. Bot im
 | 1 | **S4 Grid strategy research** | med | Regime filter now exists as shared infra (`src/backtest/regime-filter.ts`). Build grid strategy on Hyperliquid perps, backtest on 24-month Binance data with funding rates + regime filter. See auto-memory for full analysis. |
 | 2 | **Scale up leverage after 10-15 trades** | low | Change `LEVERAGE_MULT=1.0` in VPS `.env` → `pm2 restart trading-bot`. Early stats: 4.54x R:R at 33% WR — viable edge but tiny PnL at 1x. |
 | 3 | **Verify Supabase trades_source_check** | low | Colleague ran the SQL fix (2026-04-24). Verify closed trades record correctly after next trade closes. |
-| 4 | ~~S2 entry tuning~~ | — | **RESOLVED (S25):** Backtest proved removing 1H-EMA adds only 5 trades, net -$0.70. Current filters optimal. |
-| 5 | ~~S1 entry loosening~~ | — | **RESOLVED (S25):** S1 is the portfolio star (70% WR, +$79/379d, 10 trades). No reason to relax. |
+| 4 | **Hydrate activePositions on restart** | med | Bot doesn't restore position tracking from Hyperliquid on pm2 restart — opened duplicate S2 after restart. Query live positions + match to Supabase open trades on startup. |
+| 5 | **Port concurrent position fix to desktop bot** | low | `main.ts` has same `closePosition` + `cancelOpenBtcStops` pattern. Not urgent (desktop bot rarely used). |
 | 6 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
 | 7 | **Remove diagnostic logging when stable** | low | Once trading consistently, remove S1/S2/S3 diag sends (or keep signals channel muted). |
 | 8 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
