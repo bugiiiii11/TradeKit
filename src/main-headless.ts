@@ -34,7 +34,7 @@ import {
   hydrateState,
 } from "./risk/state";
 import { placeMarketOrder, placeLimitOrder, closePosition, cancelOrder, setStopLoss, setScaledTakeProfits } from "./hyperliquid/orders";
-import { getBalance, getOpenPositions, getFundingRate, getUserFills } from "./hyperliquid/account";
+import { getBalance, getOpenPositions, getFundingRate, getUserFills, getOpenBtcTriggerOrders } from "./hyperliquid/account";
 import type { PositionInfo } from "./hyperliquid/account";
 import { logTradeOpen, logTradeClose } from "./logger/trade_logger";
 import {
@@ -81,6 +81,85 @@ interface ActivePosition {
 }
 
 const activePositions: ActivePosition[] = [];
+
+async function hydrateActivePositions(): Promise<void> {
+  const livePositions = await getOpenPositions();
+  const btcPositions = livePositions.filter(p => p.coin === "BTC" && p.sizeBase > 0);
+
+  if (btcPositions.length === 0) {
+    console.log("[Bot-VPS] No open positions to hydrate.");
+    return;
+  }
+
+  const triggerOrders = await getOpenBtcTriggerOrders();
+
+  for (const pos of btcPositions) {
+    const closeSide: "B" | "A" = pos.direction === "long" ? "A" : "B";
+    const posOrders = triggerOrders.filter(o => o.side === closeSide);
+
+    const slOrder = posOrders.find(o =>
+      pos.direction === "long" ? o.triggerPx < pos.entryPrice : o.triggerPx > pos.entryPrice
+    );
+    const tpOrders = posOrders.filter(o =>
+      pos.direction === "long" ? o.triggerPx > pos.entryPrice : o.triggerPx < pos.entryPrice
+    );
+
+    const stopPrice = slOrder?.triggerPx ?? pos.entryPrice * (pos.direction === "long" ? 0.996 : 1.004);
+    const stopDistancePct = Math.abs(pos.entryPrice - stopPrice) / pos.entryPrice;
+    const riskDollar = stopDistancePct * pos.entryPrice * pos.sizeBase;
+
+    let strategy: "S1" | "S2" | "S3" = "S3";
+    if (tpOrders.length < 3) {
+      const s1Lev = Math.max(1, Math.round(10 * LEVERAGE_MULT));
+      const s2Lev = Math.max(1, Math.round(8 * LEVERAGE_MULT));
+      if (pos.leverage === s1Lev && s1Lev !== s2Lev) strategy = "S1";
+      else if (pos.leverage === s2Lev && s2Lev !== s1Lev) strategy = "S2";
+    }
+
+    let entryTimestamp: string;
+    try {
+      const fills = await getUserFills(Date.now() - 48 * 60 * 60 * 1000);
+      const entrySide: "B" | "A" = pos.direction === "long" ? "B" : "A";
+      const entryFill = fills
+        .filter(f => f.side === entrySide && Math.abs(f.closedPnl) < 0.01)
+        .sort((a, b) => a.time - b.time)
+        .find(f => Math.abs(f.price - pos.entryPrice) / pos.entryPrice < 0.005);
+      entryTimestamp = entryFill
+        ? new Date(entryFill.time).toISOString()
+        : new Date().toISOString();
+    } catch {
+      entryTimestamp = new Date().toISOString();
+    }
+
+    activePositions.push({
+      strategy,
+      direction: pos.direction,
+      entryPrice: pos.entryPrice,
+      entryTimestamp,
+      sizeBase: pos.sizeBase,
+      stopPrice,
+      marginUsd: pos.marginUsed,
+      riskDollar,
+      leverage: pos.leverage,
+      confluenceScore: 0,
+      stopDistancePct,
+      stopOid: slOrder ? String(slOrder.oid) : undefined,
+      tpOids: tpOrders.length > 0 ? tpOrders.map(o => String(o.oid)) : undefined,
+    });
+
+    console.log(
+      `[Bot-VPS] Hydrated position: ${strategy} ${pos.direction} ` +
+      `@ $${pos.entryPrice.toFixed(0)}, ${pos.sizeBase} BTC, ${pos.leverage}x, ` +
+      `SL=$${stopPrice.toFixed(0)}${slOrder ? "" : " (estimated)"}, ` +
+      `${tpOrders.length} TP(s), entry=${entryTimestamp.slice(0, 19)}Z`
+    );
+  }
+
+  sendDiscord("status",
+    `Position hydrated on restart\n${activePositions.length} position(s) restored from Hyperliquid`,
+    Colors.blue,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Main evaluation — called on each 15m bar close from WebSocket
@@ -532,6 +611,13 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     console.warn("[Bot-VPS] Risk state hydration failed:", err);
+  }
+
+  // Hydrate active positions from Hyperliquid
+  try {
+    await hydrateActivePositions();
+  } catch (err) {
+    console.warn("[Bot-VPS] Position hydration failed:", err);
   }
 
   // Command bus

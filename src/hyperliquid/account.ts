@@ -17,6 +17,15 @@ export interface PositionInfo {
   sizeBase: number;
   entryPrice: number;
   unrealizedPnl: number;
+  leverage: number;
+  marginUsed: number;
+}
+
+export interface TriggerOrderInfo {
+  oid: number;
+  side: "B" | "A";
+  triggerPx: number;
+  sz: number;
 }
 
 /**
@@ -47,6 +56,8 @@ export async function getOpenPositions(): Promise<PositionInfo[]> {
         sizeBase: Math.abs(szi),
         entryPrice: parseFloat(p.position.entryPx),
         unrealizedPnl: parseFloat(p.position.unrealizedPnl),
+        leverage: p.position.leverage.value,
+        marginUsed: parseFloat(p.position.marginUsed),
       };
     });
 }
@@ -103,5 +114,19 @@ export async function getUserFills(sinceMs?: number): Promise<FillInfo[]> {
       closedPnl: parseFloat(f.closedPnl as string),
       fee:      parseFloat(f.fee as string),
       oid:      f.oid as number,
+    }));
+}
+
+export async function getOpenBtcTriggerOrders(): Promise<TriggerOrderInfo[]> {
+  const ctx = await getHyperliquidContext();
+  const orders = await ctx.info.frontendOpenOrders({ user: ctx.masterAddress });
+
+  return orders
+    .filter((o) => o.coin === "BTC" && o.isTrigger && o.reduceOnly)
+    .map((o) => ({
+      oid: o.oid,
+      side: o.side,
+      triggerPx: parseFloat(o.triggerPx),
+      sz: parseFloat(o.sz),
     }));
 }
