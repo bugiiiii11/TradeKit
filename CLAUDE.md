@@ -95,12 +95,9 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 
 ## Untested Code Paths
 
-**Trade execution (first LIVE trade will exercise):**
-- `insertClosedTrade` + `syncPositions` upsert/stale-delete — no LIVE trade has closed yet
-- `calcMarginBasedSize` / per-strategy leverage / S3 scaled TPs under live conditions
+**Trade execution:**
 - Kill switch close-all with real open LIVE positions
 - Native TP trigger execution + partial fill cascade on Hyperliquid
-- Reconciliation (`reconcilePositions`) — deployed on VPS (Session 22 restart)
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
 
 **Operational:**

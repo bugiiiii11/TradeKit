@@ -1,6 +1,6 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
 
 ## What Was Done (Session 1) — Drift→Hyperliquid pivot + full bot wiring
@@ -810,4 +810,25 @@ The integration test (Part A) writes a real row to Supabase and deletes it in a 
    - `src/scripts/backtest.ts` — CLI with `--days`, `--bankroll`, `--margin` flags
 
    **Known v1 simplifications:** close-only SL/TP detection uses bar high/low (not tick data); S3 TPs exit full position at highest TP reached in bar (not 33/33/34% partial closes); BBWP/PMARP use default TV params (may differ if chart settings differ).
+
+---
+
+## Session 23 — Fix consecutive-loss infinite pause + dead WebSocket
+
+**Two bugs found and fixed, both deployed to VPS.**
+
+### Bug 1: Consecutive Loss Infinite Pause Loop
+Risk manager `canTrade()` checked `consecutiveLosses >= 3` on every call — but the counter only resets on a winning trade. After 4 S3 losses, the bot was permanently stuck: pause 4h -> expire -> signal arrives -> re-pause 4h -> repeat forever.
+
+**Fix:** Reset `consecutiveLosses` to 0 when the pause is triggered (`resetConsecutiveLosses()` in `state.ts`, called from `manager.ts`). After the 4h cool-off, bot gets a fresh slate.
+
+### Bug 2: WebSocket Dead for 48 Hours
+Heartbeat detected staleness but `reconnect()` silently failed every 30 seconds for 48 hours (5,700+ attempts).
+
+**Fix:** Added `MAX_RECONNECT_ATTEMPTS = 10` to `candle-consumer.ts`. After 10 consecutive failed reconnects (~5 min), process exits with code 1 for pm2 to do a clean restart. Counter resets to 0 on any successful message.
+
+### Other
+- Consultant review of Session 22 trades: 8 trades, 6 S3, 33% WR, 4.54x R:R
+- Analyzed Flash `regimeFilter.ts` for potential S3 improvement
+- Committed `9677532`, deployed to VPS.
 
