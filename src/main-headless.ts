@@ -122,7 +122,7 @@ async function hydrateActivePositions(): Promise<void> {
       const entrySide: "B" | "A" = pos.direction === "long" ? "B" : "A";
       const entryFill = fills
         .filter(f => f.side === entrySide && Math.abs(f.closedPnl) < 0.01)
-        .sort((a, b) => a.time - b.time)
+        .sort((a, b) => b.time - a.time)
         .find(f => Math.abs(f.price - pos.entryPrice) / pos.entryPrice < 0.005);
       entryTimestamp = entryFill
         ? new Date(entryFill.time).toISOString()
