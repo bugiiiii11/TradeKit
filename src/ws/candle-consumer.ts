@@ -140,14 +140,23 @@ export class CandleConsumer {
   private async subscribe(): Promise<void> {
     console.log("[WS] Connecting to Hyperliquid WebSocket...");
 
-    this.transport = new hl.WebSocketTransport({ url: "wss://api.hyperliquid.xyz/ws" });
-    this.subsClient = new hl.SubscriptionClient({ transport: this.transport });
+    const transport = new hl.WebSocketTransport({ url: "wss://api.hyperliquid.xyz/ws" });
+    const subsClient = new hl.SubscriptionClient({ transport });
 
-    this.subscription = await this.subsClient.candle(
-      { coin: "BTC", interval: "15m" },
-      (candle: HLCandle) => this.onCandleMessage(candle),
-    );
+    let subscription: { unsubscribe(): Promise<void> };
+    try {
+      subscription = await subsClient.candle(
+        { coin: "BTC", interval: "15m" },
+        (candle: HLCandle) => this.onCandleMessage(candle),
+      );
+    } catch (err) {
+      try { await transport[Symbol.asyncDispose](); } catch { /* ignore */ }
+      throw err;
+    }
 
+    this.transport = transport;
+    this.subsClient = subsClient;
+    this.subscription = subscription;
     this.lastMessageTime = Date.now();
     console.log("[WS] Subscribed to BTC 15m candles");
   }
