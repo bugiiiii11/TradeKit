@@ -29,7 +29,7 @@ let lastSetLeverage: number | null = null;
 /** Round size to the asset's szDecimals. */
 function roundSize(sizeBase: number, szDecimals: number): string {
   const factor = Math.pow(10, szDecimals);
-  return (Math.floor(sizeBase * factor) / factor).toFixed(szDecimals);
+  return (Math.floor(sizeBase * factor + 1e-9) / factor).toFixed(szDecimals);
 }
 
 /**
