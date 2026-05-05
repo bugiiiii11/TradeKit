@@ -86,28 +86,13 @@ Files: `src/main-headless.ts`, `src/hyperliquid/orders.ts`. Committed: `85255e2`
 
 ---
 
-## What Was Done (Session 24) — S3 regime filter backtest
+## What Was Done (Session 27) — Health check + leverage scale-up
 
-### Health Check
-VPS bot healthy: 107 bar closes (~27h uptime), WS stable, risk state clean (bankroll=$398.94, consecutiveLosses=0, no pause). Ghost positions resolved on pm2 restart. Diagnostics flowing with real values (BBWP, PMARP, StochRSI). No trades since restart — filters correctly blocking.
+### VPS Health Check
+Bot healthy: 42h uptime, 0 unstable restarts, error log empty. WS listener leak fix holding — no crash/reconnect loops. 86 bar closes processed. One S2 long @ $78,474 closed at +$0.84 (+4.21%). Balance: $397.30 → $398.14. BBWP 92-96 (extreme vol expansion) correctly blocking most entries. Hydration never fired (no WS crashes required restart).
 
-### S3 Regime Filter A/B Backtest
-Adapted Flash's `regimeFilter.ts` (5d/21d daily EMA trend detection) to block S3 entries in trending markets. Ran 379-day comparison on 24-month Binance data:
-
-| Metric | Baseline | Filtered | Delta |
-|--------|----------|----------|-------|
-| Trades | 779 | 686 | -93 |
-| Winners | 229 | 203 | -26 |
-| Losers | 550 | 483 | **-67** |
-| Win rate | 29.4% | 29.6% | +0.2pp |
-| Total PnL | -$81.95 | -$71.09 | **+$10.85** |
-| Max drawdown | 16.5% | 14.4% | **-2.1pp** |
-
-**Key finding:** Filter removes 93 trades (67 losers, 26 winners — 2.6:1 kill ratio), saves $11.56. But S3 remains deeply negative regardless. Filter is a clear improvement but doesn't fix the core issue.
-
-**Verdict:** Adopt filter as shared infra for S4 grid (where Flash originally used it). Keep S3 disabled in production.
-
-**Files:** `src/backtest/regime-filter.ts` (new), `src/scripts/backtest_regime.ts` (new A/B comparison), engine.ts + types.ts updated. Committed: `8fa1207`.
+### Leverage Scale-Up
+Changed `LEVERAGE_MULT` from 0.25 to 0.5 in VPS `.env`. Restarted with `pm2 restart trading-bot --update-env`. Bot startup clean, warmup loaded (1500 15m + 251 4H + 251 1D bars). Effective leverage now: S1=5x, S2=4x (on 5% margin). Next trades will be ~double previous size.
 
 ---
 
@@ -117,14 +102,14 @@ Adapted Flash's `regimeFilter.ts` (5d/21d daily EMA trend detection) to block S3
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-02 | VPS bot running S26 fixes | Deployed 4 fixes: position hydration (`bb1998e`), roundSize precision (`2730e2c`), timestamp fix (`d7f51a1`), WS listener leak (`1a8b0ff`). Balance $397.30, no open positions. Hydration validated live with S3 short. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
+| 2026-05-05 | VPS bot at 0.5x leverage | Scaled from 0.25x to 0.5x (Session 27). S26 fixes stable (42h clean run). Balance $398.14. Monitor first few trades at new sizing for correct margin/leverage. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
 | 1 | **S4 Grid strategy research** | med | Regime filter now exists as shared infra (`src/backtest/regime-filter.ts`). Build grid strategy on Hyperliquid perps, backtest on 24-month Binance data with funding rates + regime filter. See auto-memory for full analysis. |
-| 2 | **Scale up leverage after 10-15 trades** | low | Change `LEVERAGE_MULT=1.0` in VPS `.env` → `pm2 restart trading-bot`. ~15 live trades so far at 0.25x. |
+| 2 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x (Session 27). After ~10-15 trades at 0.5x confirm stable sizing, bump to 1.0x. Same process: edit `.env` + `pm2 restart --update-env`. |
 | 3 | **Port concurrent position fix to desktop bot** | low | `main.ts` has same `closePosition` + `cancelOpenBtcStops` pattern. Not urgent (desktop bot rarely used). |
 | 4 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
 | 5 | **Remove diagnostic logging when stable** | low | Once trading consistently, remove S1/S2/S3 diag sends (or keep signals channel muted). |

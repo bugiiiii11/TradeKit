@@ -1,6 +1,6 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-24). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
 
 ## What Was Done (Session 1) — Drift→Hyperliquid pivot + full bot wiring
@@ -831,4 +831,29 @@ Heartbeat detected staleness but `reconnect()` silently failed every 30 seconds 
 - Consultant review of Session 22 trades: 8 trades, 6 S3, 33% WR, 4.54x R:R
 - Analyzed Flash `regimeFilter.ts` for potential S3 improvement
 - Committed `9677532`, deployed to VPS.
+
+---
+
+## What Was Done (Session 24) — S3 regime filter backtest
+
+### Health Check
+VPS bot healthy: 107 bar closes (~27h uptime), WS stable, risk state clean (bankroll=$398.94, consecutiveLosses=0, no pause). Ghost positions resolved on pm2 restart. Diagnostics flowing with real values (BBWP, PMARP, StochRSI). No trades since restart — filters correctly blocking.
+
+### S3 Regime Filter A/B Backtest
+Adapted Flash's `regimeFilter.ts` (5d/21d daily EMA trend detection) to block S3 entries in trending markets. Ran 379-day comparison on 24-month Binance data:
+
+| Metric | Baseline | Filtered | Delta |
+|--------|----------|----------|-------|
+| Trades | 779 | 686 | -93 |
+| Winners | 229 | 203 | -26 |
+| Losers | 550 | 483 | **-67** |
+| Win rate | 29.4% | 29.6% | +0.2pp |
+| Total PnL | -$81.95 | -$71.09 | **+$10.85** |
+| Max drawdown | 16.5% | 14.4% | **-2.1pp** |
+
+**Key finding:** Filter removes 93 trades (67 losers, 26 winners — 2.6:1 kill ratio), saves $11.56. But S3 remains deeply negative regardless. Filter is a clear improvement but doesn't fix the core issue.
+
+**Verdict:** Adopt filter as shared infra for S4 grid (where Flash originally used it). Keep S3 disabled in production.
+
+**Files:** `src/backtest/regime-filter.ts` (new), `src/scripts/backtest_regime.ts` (new A/B comparison), engine.ts + types.ts updated. Committed: `8fa1207`.
 
