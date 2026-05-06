@@ -55,7 +55,7 @@ let lastS2EvalTime = 0;
 
 // Track active positions opened by this bot
 interface ActivePosition {
-  strategy: "S1" | "S2" | "S3";
+  strategy: "S1" | "S2" | "S3" | "manual";
   direction: "long" | "short";
   entryPrice: number;
   entryTimestamp: string;
@@ -460,6 +460,7 @@ async function checkExits(
 ): Promise<void> {
   for (let i = activePositions.length - 1; i >= 0; i--) {
     const pos = activePositions[i];
+    if (pos.strategy === "manual") continue;
     let shouldExit = false;
     let exitReason = "";
 
@@ -572,7 +573,7 @@ async function main(): Promise<void> {
     },
     registerManualPosition: (pos) => {
       activePositions.push({
-        strategy: "S3", // manual trades use S3-like exit logic (if any)
+        strategy: "manual",
         direction: pos.direction,
         entryPrice: pos.entryPrice,
         entryTimestamp: pos.entryTimestamp,

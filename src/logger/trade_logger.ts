@@ -19,7 +19,7 @@ const LOG_PATH = path.resolve(__dirname, "../../trades/trade_log.json");
 
 export interface TradeRecord {
   timestamp: string;
-  strategy: "S1" | "S2" | "S3";
+  strategy: "S1" | "S2" | "S3" | "manual";
   direction: "long" | "short";
   entry_price: number;
   stop_loss: number;

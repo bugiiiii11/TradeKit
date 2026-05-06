@@ -65,7 +65,7 @@ let lastS1EvalTime = 0;
 let lastS2EvalTime = 0;
 
 interface ActivePosition {
-  strategy: "S1" | "S2" | "S3";
+  strategy: "S1" | "S2" | "S3" | "manual";
   direction: "long" | "short";
   entryPrice: number;
   entryTimestamp: string;
@@ -108,13 +108,13 @@ async function hydrateActivePositions(): Promise<void> {
     const stopDistancePct = Math.abs(pos.entryPrice - stopPrice) / pos.entryPrice;
     const riskDollar = stopDistancePct * pos.entryPrice * pos.sizeBase;
 
-    let strategy: "S1" | "S2" | "S3" = "S3";
-    if (tpOrders.length < 3) {
-      const s1Lev = Math.max(1, Math.round(10 * LEVERAGE_MULT));
-      const s2Lev = Math.max(1, Math.round(8 * LEVERAGE_MULT));
-      if (pos.leverage === s1Lev && s1Lev !== s2Lev) strategy = "S1";
-      else if (pos.leverage === s2Lev && s2Lev !== s1Lev) strategy = "S2";
-    }
+    const s1Lev = Math.max(1, Math.round(10 * LEVERAGE_MULT));
+    const s2Lev = Math.max(1, Math.round(8 * LEVERAGE_MULT));
+    const s3Lev = Math.max(1, Math.round(5 * LEVERAGE_MULT));
+    let strategy: "S1" | "S2" | "S3" | "manual" = "manual";
+    if (tpOrders.length >= 3 && pos.leverage === s3Lev) strategy = "S3";
+    else if (pos.leverage === s1Lev && s1Lev !== s2Lev) strategy = "S1";
+    else if (pos.leverage === s2Lev && s2Lev !== s1Lev) strategy = "S2";
 
     let entryTimestamp: string;
     try {
@@ -479,6 +479,7 @@ async function checkExits(
 ): Promise<void> {
   for (let i = activePositions.length - 1; i >= 0; i--) {
     const pos = activePositions[i];
+    if (pos.strategy === "manual") continue;
     let shouldExit = false;
     let exitReason = "";
 
@@ -625,7 +626,7 @@ async function main(): Promise<void> {
     clearActivePositions: () => { activePositions.length = 0; },
     registerManualPosition: (pos) => {
       activePositions.push({
-        strategy: "S3",
+        strategy: "manual",
         direction: pos.direction,
         entryPrice: pos.entryPrice,
         entryTimestamp: pos.entryTimestamp,
