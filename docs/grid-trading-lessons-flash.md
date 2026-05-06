@@ -1,4 +1,4 @@
-# Grid Trading Lessons from Flash (ETH/USDC + cbBTC/USDC on Base)
+pe# Grid Trading Lessons from Flash (ETH/USDC + cbBTC/USDC on Base)
 
 Live since session 112 (~4 months). Spot AMM grid on UniswapV3 (Base). Two bots: ETH/USDC and cbBTC/USDC, both $12 orders, 10 levels per side.
 

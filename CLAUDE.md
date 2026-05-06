@@ -11,8 +11,8 @@
 - **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$399 USDC, separate account)
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
-- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2 at 0.5x leverage (S3 disabled)
-- **Strategy:** BTC perps, S1+S2+S6 active (S3 disabled — net -$82 in 379-day backtest, profit factor 0.51)
+- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S6 at 0.5x leverage (S3 disabled)
+- **Strategy:** BTC perps, S1+S2+S6 active (S3 disabled, S7 parked — backtest -$3 PnL). S5 cascade receiver built, not deployed.
 - **Leverage:** S1=10x, S2=8x, S6=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
 - **S3 diagnostics:** enabled (Session 22) — logs every StochRSI cross with filter results
@@ -43,7 +43,9 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 
 **Hyperliquid:** `src/hyperliquid/client.ts` (SDK init), `account.ts` (balance, positions, funding, fills), `orders.ts` (market/limit, SL/TP, scaled TPs, stop cleanup, isolated margin)
 
-**Strategy:** `s1_ema_trend.ts` (4H EMA8/55 cross + Daily macro), `s2_mean_reversion.ts` (1H EMA55 retest, BBWP<35, PMARP), `s3_stoch_rsi.ts` (15m StochRSI, BBWP<40 filter, 45min min hold), `s6_bbwp_breakout.ts` (1H BBWP >50 from <20 compression, EMA21 direction, bypasses confluence), `confluence.ts` (scoring + EMA200 macro filter + per-strategy leverage)
+**Strategy:** `s1_ema_trend.ts` (4H EMA8/55 cross + Daily macro), `s2_mean_reversion.ts` (1H EMA55 retest, BBWP<35, PMARP), `s3_stoch_rsi.ts` (15m StochRSI, BBWP<40 filter, 45min min hold), `s5_cascade.ts` (DeFi liquidation cascade SHORT, 4% stop, 8h max hold, webhook-triggered), `s6_bbwp_breakout.ts` (1H BBWP >50 from <20 compression, EMA21 direction, bypasses confluence), `s7_funding_filter.ts` (funding rate velocity filter, parked), `confluence.ts` (scoring + EMA200 macro filter + per-strategy leverage)
+
+**Webhook:** `src/webhook/server.ts` (Node http, POST /webhook/cascade, Bearer auth for S5 signals)
 
 **Risk:** `manager.ts` (drawdown limits, pause, position cap=3), `sizing.ts` (calcMarginBasedSize: 5% margin), `state.ts` (bankroll/PnL tracking, Supabase hydration on restart)
 
@@ -51,7 +53,7 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 
 **Commands:** `src/commands/handlers.ts` — kill_switch, resume, manual_trade
 
-**Backtest:** `src/backtest/` — `collector.ts` (Hyperliquid candle API), `indicators.ts` (re-exports from indicators/calculator), `aligner.ts` (multi-TF alignment), `engine.ts` (strategy replay + fees + funding), `reporter.ts` (stats + Supabase storage), `aggregator.ts` (15m→higher TF), `binance-loader.ts` (CSV parser). CLI: `src/scripts/backtest.ts`, `backtest_binance.ts` (12-month)
+**Backtest:** `src/backtest/` — `collector.ts` (Hyperliquid candle API), `indicators.ts` (re-exports from indicators/calculator), `aligner.ts` (multi-TF alignment), `engine.ts` (strategy replay + fees + actual funding rates + optional S7 filter), `reporter.ts` (stats + Supabase storage), `aggregator.ts` (15m→higher TF), `binance-loader.ts` (CSV parser), `funding-loader.ts` (Binance funding rate CSV→lookup). CLI: `src/scripts/backtest.ts`, `backtest_binance.ts` (12-month)
 
 **Frontend** (Next.js 16 + React 19 + Tailwind v4 + shadcn base-nova):
 - Pages: dashboard, market-data, trades, strategies, automation, backtests (all under `(app)` route group)
@@ -82,6 +84,9 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 | `backtest_s1_filter.ts` | S1 Daily-EMA200 filter A/B: baseline vs relaxed, portfolio + S1-only isolation |
 | `validate_indicators.ts` | Compare local indicators vs TradingView (needs TV Desktop + CDP) |
 | `download_binance.ts` | Download BTC 15m klines from Binance: `--months=24` |
+| `download_funding.ts` | Download BTC funding rates from Binance: `--months=26` |
+| `backtest_s7.ts` | S7 funding filter A/B: baseline vs S7 filter on S1+S2+S6 |
+| `test_webhook.ts` | S5 webhook server integration tests (15 cases) |
 | `migrate_source_columns.ts` | Add source/target columns for two-bot architecture |
 
 ## Conventions
@@ -95,6 +100,8 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **Margin sizing:** 5% of bankroll as margin, leverage applied on top. Portfolio compounds each trade.
 - **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S2,S6` on VPS.
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
+- **S5_ENABLED**, **S5_WEBHOOK_PORT** (default 3456), **S5_WEBHOOK_SECRET** env vars: cascade webhook receiver. Disabled by default.
+- **S7_FUNDING_FILTER** env var: parked (backtest -$3 PnL). Do not enable without new validation.
 - **Manual trades** register as `strategy: "manual"` — bot exit logic skips them, only native SL/TP closes.
 
 ## Untested Code Paths
