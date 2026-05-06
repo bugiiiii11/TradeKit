@@ -24,6 +24,7 @@ import { evaluateS1, shouldExitS1 } from "./strategy/s1_ema_trend";
 import { evaluateS2, shouldExitS2 } from "./strategy/s2_mean_reversion";
 import { evaluateS3, shouldExitS3 } from "./strategy/s3_stoch_rsi";
 import { evaluateS6, shouldExitS6, resetS6ExitState, S6_STOP_DISTANCE } from "./strategy/s6_bbwp_breakout";
+import { recordFundingRate, checkFundingFilter } from "./strategy/s7_funding_filter";
 import { scoreSignals, getLeverageForSignals } from "./strategy/confluence";
 import { calcMarginBasedSize } from "./risk/sizing";
 import { canTrade } from "./risk/manager";
@@ -61,6 +62,8 @@ const ENABLED_STRATEGIES = (process.env.ENABLED_STRATEGIES ?? "S1,S2,S3")
 
 // Leverage multiplier for reduced-risk deployment (0.25 = quarter leverage)
 const LEVERAGE_MULT = parseFloat(process.env.LEVERAGE_MULT ?? "0.25");
+
+const S7_FUNDING_FILTER = (process.env.S7_FUNDING_FILTER ?? "false").toLowerCase() === "true";
 
 let lastS1EvalTime = 0;
 let lastS2EvalTime = 0;
@@ -205,6 +208,7 @@ async function onBarClose(snapshots: {
     let fundingRate: number | null = null;
     try {
       fundingRate = await getFundingRate();
+      recordFundingRate(fundingRate);
     } catch (err) {
       console.warn("[Bot-VPS] getFundingRate failed:", err);
     }
@@ -228,6 +232,26 @@ async function onBarClose(snapshots: {
       const s1 = evaluateS1(snap4H, snap1D);
       if (s1) signals.push(s1);
       lastS1EvalTime = now;
+    }
+
+    // S7: funding rate momentum filter (optional, S1/S2 only)
+    if (S7_FUNDING_FILTER && signals.length > 0) {
+      for (let i = signals.length - 1; i >= 0; i--) {
+        const s = signals[i];
+        if (s.strategy === "S1" || s.strategy === "S2") {
+          const f = checkFundingFilter(s.direction);
+          console.log(
+            `[S7-filter] ${s.strategy} ${s.direction}: velocity=${(f.velocity * 10000).toFixed(4)}bps — ${f.allowed ? "PASS" : "BLOCKED"}`,
+          );
+          if (!f.allowed) {
+            sendDiscord("signals",
+              `S7 filter BLOCKED ${s.strategy} ${s.direction}\nFunding velocity opposing (${(f.velocity * 10000).toFixed(4)}bps)`,
+              Colors.orange,
+            );
+            signals.splice(i, 1);
+          }
+        }
+      }
     }
 
     // S6: independent evaluation (1H time-gate, bypasses confluence)
@@ -697,6 +721,7 @@ async function main(): Promise<void> {
   console.log(`[Bot-VPS] Strategies: ${ENABLED_STRATEGIES.join(", ")}`);
   console.log(`[Bot-VPS] Leverage multiplier: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x, S6=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x)`);
   console.log(`[Bot-VPS] Bankroll: $${STARTING_BANKROLL}`);
+  console.log(`[Bot-VPS] S7 funding filter: ${S7_FUNDING_FILTER ? "ON" : "OFF"}`);
   console.log(`[Bot-VPS] Source tag: ${BOT_SOURCE}`);
 
   // Hydrate risk state
