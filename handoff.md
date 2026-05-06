@@ -12,32 +12,6 @@
 
 ---
 
-## What Was Done (Session 26) — Position hydration + bug fixes + deep dive
-
-### Hydrate activePositions on Restart
-Implemented position hydration from Hyperliquid on bot startup. Queries live positions (direction, entryPrice, sizeBase, leverage, marginUsed) + open trigger orders via `frontendOpenOrders` API to recover SL/TP OIDs. Infers strategy from TP count (3 TPs = S3) and leverage. Finds actual entry time from 48h fill history (most recent matching fill).
-
-Files: `src/hyperliquid/account.ts` (added `leverage`/`marginUsed` to `PositionInfo`, added `getOpenBtcTriggerOrders()`), `src/main-headless.ts` (`hydrateActivePositions()` called from `main()` after risk state hydration). Committed: `bb1998e`.
-
-**Live validation:** Restarted VPS with S3 short open. Hydration correctly detected position, recovered all 4 OIDs (1 SL + 3 TPs), inferred S3. On next bar close, `checkExits` properly canceled orders by OID and closed position.
-
-### roundSize Floating-Point Fix
-`Math.floor(0.00007 * 100000)` = 6 due to IEEE 754. TP orders were placed 8% smaller than intended (0.00006 instead of 0.00007), leaving dust uncovered. Fix: `Math.floor(x + 1e-9)`. File: `src/hyperliquid/orders.ts`. Committed: `2730e2c`.
-
-### Hydration Entry Timestamp Fix
-Fill lookup sorted oldest-first, matching a previous trade's fill at similar price instead of the actual entry. Caused `max_hold_time` exit immediately after restart. Fix: sort most-recent-first. File: `src/main-headless.ts`. Committed: `d7f51a1`.
-
-### WebSocket Listener Leak Fix
-`subscribe()` assigned `this.transport` before `candle()` could throw, leaving orphaned transports with close listeners on each failed reconnect attempt. Caused `MaxListenersExceededWarning` after 8 attempts. Fix: use local vars, only assign on success, dispose immediately on failure. File: `src/ws/candle-consumer.ts`. Committed: `1a8b0ff`.
-
-### VPS Deep Dive
-- WS died ~45 min after first deploy, reconnect/pm2 restart cycle worked correctly
-- 3 S3 trades today: long +$0.014, long +$0.040, short -$0.007
-- S2 diagnostics bullish (BBWP=2.0, 1H-EMA=bull) but no retest yet
-- Supabase `trades_source_check` verified: all 10 recent trades have `source=vps-bot`
-
----
-
 ## What Was Done (Session 27) — Health check + leverage scale-up
 
 ### VPS Health Check
@@ -79,21 +53,44 @@ Got production grid trading knowledge transfer from Flash project (4 months live
 
 ---
 
+## What Was Done (Session 29) — S4 Grid strategy backtest (not viable)
+
+### Grid Backtest Engine
+Built a separate grid backtest engine (`src/backtest/grid-engine.ts`) — grids manage N concurrent cells vs 1 position, so the directional engine couldn't be extended. Reuses existing data pipeline (Binance loader → aggregator → aligner).
+
+Files: `src/strategy/s4_grid.ts` (config, types, helpers), `src/backtest/grid-engine.ts` (simulation engine), `src/scripts/backtest_grid.ts` (CLI). Committed: `aaeedd8`.
+
+### 9-Config Parameter Sweep
+Tested across spacing (0.3%–2.0%), levels (3–10), recenter policies (aggressive/slow/disabled), and regime filter on/off. 379-day window on Binance data.
+
+**Best result:** -$6.38 (-1.3%) with 0.8% spacing, 5 levels, zero recenters, no regime filter. But grid was only active 5.3% of the time — 84 round-trips in 379 days.
+
+### Root Cause: Structural Mismatch
+- **Recenters are fatal:** every config with recentering showed recenter losses > gross profit (-$64 to -$438)
+- **Without recenters, grid is dormant 95%:** BTC exits 8% range in days, doesn't return
+- **Funding NOT the killer:** only -$4/year on long side — confirmed via per-side tracking
+- **Flash vs S4:** Flash works because spot (zero holding cost, local mean-reversion from DEX arb). BTC perps trend too much.
+
+### Conclusion
+Both S3 (scalp) and S4 (grid) confirm: **BTC perps favor trend-following (S1, S2), not mean-reversion.** S4 code preserved for future experiments on mean-reverting instruments. Full analysis in `docs/s4-grid-backtest-analysis.md`.
+
+---
+
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-06 | S1+S2 only at 0.5x leverage | S3 disabled (Session 28). Monitor first S1/S2 trades without S3 position slot competition. Balance $399.31. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
+| 2026-05-06 | S1+S2 only at 0.5x leverage | S3 disabled (Session 28), S4 not viable (Session 29). Monitor S1/S2 trade quality. Balance ~$399. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **S4 Grid strategy design + backtest** | med | Flash lessons in `docs/grid-trading-lessons-flash.md`. Regime filter ready. Build perps grid on Hyperliquid, backtest on 24-month Binance data. Key: rapid momentum detector, sell-only mode, volatility-adaptive spacing. |
-| 2 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x. After ~10-15 trades at 0.5x with S1+S2 only, bump to 1.0x. Same process: edit `.env` + `pm2 restart --update-env`. |
+| 1 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x. After ~10-15 trades at 0.5x with S1+S2 only, bump to 1.0x. Same process: edit `.env` + `pm2 restart --update-env`. |
+| 2 | **Martin's TV setups → manual trades** | med | Most promising new alpha source. Manual trade infra is ready (Session 28 fix). S1 filter toggle ready. Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
 | 3 | **S1 filter toggle from dashboard** | med | Frontend button to flip `S1_SKIP_DAILY_EMA200` without SSH. Enables Martin to react to Krown-type signals quickly. |
-| 4 | **S3 re-evaluation** | low | S3 disabled (net -$82, PF 0.51). Re-enable anytime via `ENABLED_STRATEGIES=S1,S2,S3`. Consider S4 grid as replacement for S3's "frequent small trades" niche. |
-| 5 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
-| 6 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
+| 4 | **S5 trend-following strategy** | med | New entry signals, same "ride the trend" structure as S1. Both S3+S4 confirm BTC perps favor trend-following, not mean-reversion. |
+| 5 | **S3 re-evaluation** | low | S3 disabled (net -$82, PF 0.51). Code intact, re-enable via `ENABLED_STRATEGIES=S1,S2,S3`. Worth revisiting if Martin fine-tunes StochRSI parameters. |
+| 6 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
