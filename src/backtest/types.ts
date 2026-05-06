@@ -33,7 +33,7 @@ export interface AlignedBar {
   bar1D: BarData;
 }
 
-export type StrategyId = "S1" | "S2" | "S3";
+export type StrategyId = "S1" | "S2" | "S3" | "S6";
 export type Direction = "long" | "short";
 
 /** A position open in the simulated account. */

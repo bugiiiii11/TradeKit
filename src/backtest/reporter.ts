@@ -66,13 +66,13 @@ export function printResults(result: BacktestResult): void {
   console.log(`\n  ${"Strategy".padEnd(14)} ${"Trades".padStart(6)} ${"Win%".padStart(7)} ${"PnL ($)".padStart(10)} ${"PnL (% bank)".padStart(13)}`);
   console.log(`  ${LINE.slice(0, 54)}`);
 
-  for (const id of ["S1", "S2", "S3"] as const) {
+  for (const id of ["S1", "S2", "S3", "S6"] as const) {
     const s = stats.byStrategy[id];
-    if (s.trades === 0) {
+    if (!s || s.trades === 0) {
       console.log(`  ${"  " + id + " (no trades)".padEnd(12)} ${"—".padStart(6)} ${"—".padStart(7)} ${"—".padStart(10)} ${"—".padStart(13)}`);
       continue;
     }
-    const label = { S1: "S1 EMA Trend", S2: "S2 Mean Rev", S3: "S3 Stoch RSI" }[id];
+    const label = { S1: "S1 EMA Trend", S2: "S2 Mean Rev", S3: "S3 Stoch RSI", S6: "S6 BBWP Brk" }[id];
     console.log(
       `  ${pad(label, 14)} ${pad(s.trades, 6, true)} ${pad(pct(s.winRate * 100, 0), 7, true)} ${pad(usd(s.pnlUsd), 10, true)} ${pad(pct((s.pnlUsd / config.bankroll) * 100), 13, true)}`,
     );
@@ -175,9 +175,9 @@ export async function saveToSupabase(result: BacktestResult): Promise<void> {
   }
 
   const { config, trades, stats, equityCurve } = result;
-  const s1 = stats.byStrategy.S1;
-  const s2 = stats.byStrategy.S2;
-  const s3 = stats.byStrategy.S3;
+  const s1 = stats.byStrategy.S1 ?? { trades: 0, winRate: 0, pnlUsd: 0 };
+  const s2 = stats.byStrategy.S2 ?? { trades: 0, winRate: 0, pnlUsd: 0 };
+  const s3 = stats.byStrategy.S3 ?? { trades: 0, winRate: 0, pnlUsd: 0 };
 
   const tradesJson = trades.map((t: BacktestTrade) => ({
     ...t,

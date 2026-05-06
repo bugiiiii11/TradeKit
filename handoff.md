@@ -88,9 +88,10 @@ Both S3 (scalp) and S4 (grid) confirm: **BTC perps favor trend-following (S1, S2
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x. After ~10-15 trades at 0.5x with S1+S2 only, bump to 1.0x. Same process: edit `.env` + `pm2 restart --update-env`. |
-| 2 | **Martin's TV setups → manual trades** | med | Most promising new alpha source. Manual trade infra is ready (Session 28 fix). S1 filter toggle ready. Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
-| 3 | **S1 filter toggle from dashboard** | med | Frontend button to flip `S1_SKIP_DAILY_EMA200` without SSH. Enables Martin to react to Krown-type signals quickly. |
-| 4 | **S5 trend-following strategy** | med | New entry signals, same "ride the trend" structure as S1. Both S3+S4 confirm BTC perps favor trend-following, not mean-reversion. |
-| 5 | **S3 re-evaluation** | low | S3 disabled (net -$82, PF 0.51). Code intact, re-enable via `ENABLED_STRATEGIES=S1,S2,S3`. Worth revisiting if Martin fine-tunes StochRSI parameters. |
-| 6 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
+| 1 | **S6 BBWP Breakout backtest** | med | Volatility expansion signal: BBWP crosses >50 from <20 compression. Uses existing data, no dependencies. `docs/tradekit-strategy-ideas-from-flash.md`. |
+| 2 | **S5 Cascade Signal Overlay** | med | DeFi liquidation cascade as SHORT entry signal. Needs Flash webhook (~30min their side). 2-5x/year, high alpha per event. |
+| 3 | **S7 Funding Rate Momentum filter** | low | Lightweight S1/S2 entry filter using funding velocity. ~30 lines. Needs historical funding data. |
+| 4 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x. After ~10-15 trades at 0.5x with S1+S2 only, bump to 1.0x. |
+| 5 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (Session 28). S1 filter toggle ready. Colleague finds setups on TV → we code + backtest. |
+| 6 | **S1 filter toggle from dashboard** | med | Frontend button to flip `S1_SKIP_DAILY_EMA200` without SSH. |
+| 7 | **S3 re-evaluation** | low | Code intact, re-enable via `ENABLED_STRATEGIES=S1,S2,S3`. Revisit if Martin fine-tunes StochRSI. |

@@ -21,6 +21,7 @@
 import { evaluateS1, resetS1State } from "../strategy/s1_ema_trend";
 import { evaluateS2, resetS2State } from "../strategy/s2_mean_reversion";
 import { evaluateS3, resetS3State, S3_MIN_HOLD_MS } from "../strategy/s3_stoch_rsi";
+import { evaluateS6, resetS6State, S6_STOP_DISTANCE } from "../strategy/s6_bbwp_breakout";
 import { scoreSignals, getLeverageForSignals } from "../strategy/confluence";
 import type { IndicatorSnapshot, Timeframe } from "../tradingview/reader";
 import { computeRegimeMap, type RegimeInfo } from "./regime-filter";
@@ -141,6 +142,14 @@ function checkExit(
     }
   }
 
+  // --- S6: EMA8/EMA55 reverse cross on 1H ---
+  if (strategy === "S6" && prev1H) {
+    const wasAbove = prev1H.ema8 > prev1H.ema55;
+    const isAbove  = bar1H.ema8  > bar1H.ema55;
+    if (direction === "long"  && wasAbove && !isAbove) return { exit: true, exitPrice: bar15m.close, reason: "ema_reverse_cross" };
+    if (direction === "short" && !wasAbove && isAbove) return { exit: true, exitPrice: bar15m.close, reason: "ema_reverse_cross" };
+  }
+
   // --- S3: reverse StochRSI cross (only after min hold time) ---
   if (strategy === "S3" && prev15m) {
     const holdMs = bar15m.timestamp - entryTimestamp;
@@ -220,6 +229,7 @@ export function runBacktest(
   resetS1State();
   resetS2State();
   resetS3State();
+  resetS6State();
 
   const trades: BacktestTrade[] = [];
   const filteredSignals: FilteredSignal[] = [];
@@ -252,6 +262,10 @@ export function runBacktest(
   let prev4H:  BarData | null = null;
   let prev1H:  BarData | null = null;
 
+  // S6 state
+  let s6PeakBbwp = 0;
+  let s6Last1HTs = 0;
+
   for (const aligned of alignedBars) {
     const { bar15m, bar1H, bar4H, bar1D } = aligned;
 
@@ -272,6 +286,23 @@ export function runBacktest(
     }
 
     // === PHASE 1: EXIT CHECKS (before evaluate() updates module prev state) ===
+
+    // S6 BBWP cycle exit (needs per-position state tracking)
+    if (openPos && openPos.strategy === "S6") {
+      if (bar1H.bbwp > 85) s6PeakBbwp = Math.max(s6PeakBbwp, bar1H.bbwp);
+      if (s6PeakBbwp > 85 && bar1H.bbwp < 35) {
+        const trade = buildTrade(openPos, activeStrategies, bar15m.close, bar15m.timestamp, "bbwp_cycle_complete", accumulatedFunding);
+        trades.push(trade);
+        equity += trade.pnlUsd;
+        equityCurve.push({ timestamp: bar15m.timestamp, equity });
+        openPos = null;
+        activeStrategies = "";
+        accumulatedFunding = 0;
+        lastFundingHour = -1;
+        s6PeakBbwp = 0;
+      }
+    }
+
     if (openPos) {
       const exitResult = checkExit(openPos, prev15m, prev4H, prev1H, bar15m, bar4H, bar1H);
       if (exitResult.exit) {
@@ -283,6 +314,7 @@ export function runBacktest(
         activeStrategies = "";
         accumulatedFunding = 0;
         lastFundingHour = -1;
+        s6PeakBbwp = 0;
       }
     }
 
@@ -291,6 +323,14 @@ export function runBacktest(
     const s1Signal = evaluateS1(snap4H, snap1D);
     const s2Signal = evaluateS2(snap1H, snap4H);
     const s3Signal = evaluateS3(snap15m, snap1H);
+
+    // S6: evaluate only on 1H bar changes (barsSinceCompression counter is stateful)
+    const s6Enabled = enabled.includes("S6");
+    let s6Signal: ReturnType<typeof evaluateS6> = null;
+    if (s6Enabled && bar1H.timestamp !== s6Last1HTs) {
+      s6Last1HTs = bar1H.timestamp;
+      s6Signal = evaluateS6({ bbwp: bar1H.bbwp, close: bar1H.close, ema21: bar1H.ema21 });
+    }
 
     if (!openPos) {
       const rawSignals = [s1Signal, s2Signal, s3Signal].filter(
@@ -358,6 +398,32 @@ export function runBacktest(
           activeStrategies = rawSignals.map(s => s.strategy).sort().join(",");
         }
       }
+
+      // S6 independent entry (fallback when S1/S2/S3 didn't open a position)
+      if (!openPos && s6Signal) {
+        const dir         = s6Signal.direction;
+        const s6Leverage  = 8;
+        const marginUsd   = equity * config.marginPct;
+        const notionalUsd = marginUsd * s6Leverage;
+        const entryPrice  = bar15m.close;
+        const stopPrice   = dir === "long"
+          ? entryPrice * (1 - S6_STOP_DISTANCE)
+          : entryPrice * (1 + S6_STOP_DISTANCE);
+
+        openPos = {
+          strategy:        "S6",
+          direction:       dir,
+          entryPrice,
+          entryTimestamp:  bar15m.timestamp,
+          leverage:        s6Leverage,
+          marginUsd,
+          notionalUsd,
+          stopPrice,
+          stopDistancePct: S6_STOP_DISTANCE,
+        };
+        activeStrategies = "S6";
+        s6PeakBbwp = 0;
+      }
     }
 
     // Update engine prev bars at end of bar
@@ -400,6 +466,7 @@ function computeStats(
     S1: { ...empty },
     S2: { ...empty },
     S3: { ...empty },
+    S6: { ...empty },
   };
 
   if (trades.length === 0) {
@@ -419,7 +486,7 @@ function computeStats(
   const totalPnl  = trades.reduce((s, t) => s + t.pnlUsd, 0);
 
   // Per-strategy stats
-  for (const id of ["S1", "S2", "S3"] as StrategyId[]) {
+  for (const id of ["S1", "S2", "S3", "S6"] as StrategyId[]) {
     const st = trades.filter(t => t.strategy === id);
     if (st.length === 0) continue;
     const w = st.filter(t => t.pnlUsd > 0).length;
