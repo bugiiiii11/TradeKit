@@ -90,22 +90,28 @@ Root cause: Binance funding rates settle every 8h — too coarse for the 4h velo
 
 Files: `src/scripts/download_funding.ts` (new), `src/backtest/funding-loader.ts` (new), `src/scripts/backtest_s7.ts` (new), `src/backtest/engine.ts` (actual rates + S7 filter config), `src/backtest/types.ts` (fundingRates + s7Filter fields).
 
-### S5 Cascade Webhook Receiver (built, not deployed)
+### S5 Cascade Webhook Receiver (built + deployed + Flash wired)
 Built HTTP webhook receiver for Flash DeFi liquidation cascade signals:
 - Strategy: `src/strategy/s5_cascade.ts` — SHORT-only, 4% stop, 8h max hold, BBWP>85 exit
 - Server: `src/webhook/server.ts` — Node built-in `http`, `POST /webhook/cascade`, Bearer auth
 - Entry: S5 bypasses confluence (like S6), evaluates on bar close after signal received
 - 15/15 integration tests pass (`src/scripts/test_webhook.ts`)
-- Integrated into `main-headless.ts` with env vars: `S5_ENABLED`, `S5_WEBHOOK_PORT`, `S5_WEBHOOK_SECRET`
 
-**Deployed to VPS** — webhook listening on port 3456. Flash liquidation bots (`liq-navi`, `liq-scallop`, `liq-suilend`) run on the same VPS, so they POST to `localhost:3456` — no OCI firewall change needed.
+**Deployed to VPS:** `.env` configured (`S5_ENABLED=true`, secret, port 3456), pm2 restarted, webhook confirmed live. Flash's main bot (`liq-morpho-eth`) runs on Contabo — connected via persistent SSH tunnel (`autossh` + pm2) to OCI2 `localhost:3456`. No OCI firewall change needed.
 
-Files: `src/strategy/s5_cascade.ts` (new), `src/webhook/server.ts` (new), `src/scripts/test_webhook.ts` (new), `src/main-headless.ts` (S5 entry/exit + webhook start), `src/strategy/types.ts` ("S5" added to StrategyId), `src/logger/trade_logger.ts`, `src/main.ts`.
+**Flash side live:** `liq-morpho-eth` fires `medium` heartbeats hourly (tunnel health) and `high`/`critical` on cascade events (IMMINENT > 10 AND debt > $50M). 4h dedup cooldown. Tunnel health monitor with Telegram alerts on Contabo. Heartbeats confirmed received in TradeKit logs.
+
+### Discord Notification Tuning
+- Removed `medium` heartbeat spam from `#tradekit-signals` — only `high`/`critical` cascade signals posted there
+- Added S5 heartbeat status to 2h Status Digest in `#tradekit`: count + last-seen + ⚠️ if >2h gap
+
+### Doc Cleanup
+Deleted 5 stale docs from `docs/` (VPS plan, colleague tasks, analysis) and 3 temp research docs. Kept: session-archive, strategy-ideas-from-flash, grid-lessons, s4-analysis.
 
 ### Permissions Update
 Added `Edit` and `Write` to `.claude/settings.json` allow list. Safe because `protect-files.sh` hook blocks writes to `.env`, keys, and credentials.
 
-Committed: `971656d`, `dc1d933`. Pushed to origin.
+Committed: `971656d`, `dc1d933`, `c58f9e1`, `63ead03`, `50d8cb5`. All pushed.
 
 ---
 
@@ -116,15 +122,14 @@ Committed: `971656d`, `dc1d933`. Pushed to origin.
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
 | 2026-05-06 | S1+S2+S6 at 0.5x leverage | S6 deployed but no entries yet (BBWP not in compression). Monitor first S6 trade. Balance ~$399. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
-| 2026-05-06 | S5 webhook LIVE | Deployed on VPS port 3456. Flash bots on same VPS → localhost. Waiting for Flash to wire up the POST call. Monitor first cascade signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
+| 2026-05-06 | S5 cascade pipe LIVE | Full pipe working: Flash `liq-morpho-eth` (Contabo) → SSH tunnel → TradeKit webhook (OCI2). Hourly heartbeats confirmed. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Wire Flash → S5 webhook** | low | S5 deployed on VPS. Flash bots are on same machine — need to add POST to `localhost:3456/webhook/cascade` in Flash's cascade detection logic. Integration guide shared. |
-| 2 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x. After ~10-15 trades at 0.5x with S1+S2+S6, bump to 1.0x. |
-| 3 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (Session 28). S1 filter toggle ready. Colleague finds setups on TV → we code + backtest. |
-| 4 | **S1 filter toggle from dashboard** | med | Frontend button to flip `S1_SKIP_DAILY_EMA200` without SSH. |
-| 5 | **S3 re-evaluation** | low | Code intact, re-enable via `ENABLED_STRATEGIES=S1,S2,S3,S6`. Revisit if Martin fine-tunes StochRSI. |
-| 6 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding becomes available (1h granularity). |
+| 1 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x. After ~10-15 trades at 0.5x with S1+S2+S6, bump to 1.0x. |
+| 2 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (Session 28). S1 filter toggle ready. Colleague finds setups on TV → we code + backtest. |
+| 3 | **S1 filter toggle from dashboard** | med | Frontend button to flip `S1_SKIP_DAILY_EMA200` without SSH. |
+| 4 | **S3 re-evaluation** | low | Code intact, re-enable via `ENABLED_STRATEGIES=S1,S2,S3,S6`. Revisit if Martin fine-tunes StochRSI. |
+| 5 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding becomes available (1h granularity). |
