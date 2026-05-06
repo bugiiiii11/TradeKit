@@ -1,7 +1,15 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-25). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+## What Was Done (Session 27) — Health check + leverage scale-up
+
+### VPS Health Check
+Bot healthy: 42h uptime, 0 unstable restarts, error log empty. WS listener leak fix holding — no crash/reconnect loops. 86 bar closes processed. One S2 long @ $78,474 closed at +$0.84 (+4.21%). Balance: $397.30 → $398.14. BBWP 92-96 (extreme vol expansion) correctly blocking most entries. Hydration never fired (no WS crashes required restart).
+
+### Leverage Scale-Up
+Changed `LEVERAGE_MULT` from 0.25 to 0.5 in VPS `.env`. Restarted with `pm2 restart trading-bot --update-env`. Bot startup clean, warmup loaded (1500 15m + 251 4H + 251 1D bars). Effective leverage now: S1=5x, S2=4x (on 5% margin). Next trades will be ~double previous size.
 
 ## What Was Done (Session 1) — Drift→Hyperliquid pivot + full bot wiring
 
