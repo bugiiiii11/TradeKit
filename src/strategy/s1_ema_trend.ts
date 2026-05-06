@@ -20,6 +20,10 @@ import { sendDiscord, Colors } from "../notifications/discord";
  */
 const S1_STOP_DISTANCE = 0.03;
 
+export const S1_CONFIG = {
+  requireDailyEma200: (process.env.S1_SKIP_DAILY_EMA200 ?? "false").toLowerCase() !== "true",
+};
+
 /**
  * Holds the previous 4H snapshot so we can detect a fresh EMA8/EMA55 crossover
  * (cross = EMA8 was below EMA55 last candle, now above, or vice versa).
@@ -72,12 +76,14 @@ function checkCross(
   console.log(`[S1-diag] ${diagMsg}`);
   sendDiscord("signals", `S1 4H Eval\n${diagMsg}`, Colors.orange);
 
+  const dailyOk = !S1_CONFIG.requireDailyEma200;
+
   if (
     longCross &&
     ema13 > ema55 &&
     ema21 > ema55 &&
     close > ema200 &&
-    aboveMacro
+    (aboveMacro || dailyOk)
   ) {
     return { direction: "long", strategy: "S1", stopDistancePct: S1_STOP_DISTANCE };
   }
@@ -87,7 +93,7 @@ function checkCross(
     ema13 < ema55 &&
     ema21 < ema55 &&
     close < ema200 &&
-    belowMacro
+    (belowMacro || dailyOk)
   ) {
     return { direction: "short", strategy: "S1", stopDistancePct: S1_STOP_DISTANCE };
   }

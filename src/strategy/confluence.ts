@@ -19,6 +19,7 @@
 
 import { IndicatorSnapshot } from "../tradingview/reader";
 import { Signal, ConfluenceResult, Direction } from "./types";
+import { S1_CONFIG } from "./s1_ema_trend";
 
 /**
  * Fixed leverage per strategy (user-configured).
@@ -137,11 +138,11 @@ function applyMacroFilter(signals: Signal[], macro: MacroFilter): Signal[] {
   if (macro.bias === "neutral") return signals; // allow all, but size will be halved
 
   return signals.filter((s) => {
+    const exempt = s.strategy === "S1" && !S1_CONFIG.requireDailyEma200;
+    if (exempt) return true;
     if (macro.bias === "long") {
-      // Above 200 EMA: allow long signals from any strategy, but only S3 shorts
       if (s.direction === "short" && s.strategy !== "S3") return false;
     } else if (macro.bias === "short") {
-      // Below 200 EMA: allow short signals from any strategy, but only S3 longs
       if (s.direction === "long" && s.strategy !== "S3") return false;
     }
     return true;
