@@ -12,8 +12,8 @@
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
 - **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2 at 0.5x leverage (S3 disabled)
-- **Strategy:** BTC perps, S1+S2 active (S3 disabled — net -$82 in 379-day backtest, profit factor 0.51)
-- **Leverage:** S1=10x, S2=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
+- **Strategy:** BTC perps, S1+S2+S6 active (S3 disabled — net -$82 in 379-day backtest, profit factor 0.51)
+- **Leverage:** S1=10x, S2=8x, S6=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
 - **S3 diagnostics:** enabled (Session 22) — logs every StochRSI cross with filter results
 - **Discord signals:** `#tradekit-signals` channel — S1/S2/S3 diagnostics + risk manager blocks
@@ -43,7 +43,7 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 
 **Hyperliquid:** `src/hyperliquid/client.ts` (SDK init), `account.ts` (balance, positions, funding, fills), `orders.ts` (market/limit, SL/TP, scaled TPs, stop cleanup, isolated margin)
 
-**Strategy:** `s1_ema_trend.ts` (4H EMA8/55 cross + Daily macro), `s2_mean_reversion.ts` (1H EMA55 retest, BBWP<35, PMARP), `s3_stoch_rsi.ts` (15m StochRSI, BBWP<40 filter, 45min min hold), `confluence.ts` (scoring + EMA200 macro filter + per-strategy leverage)
+**Strategy:** `s1_ema_trend.ts` (4H EMA8/55 cross + Daily macro), `s2_mean_reversion.ts` (1H EMA55 retest, BBWP<35, PMARP), `s3_stoch_rsi.ts` (15m StochRSI, BBWP<40 filter, 45min min hold), `s6_bbwp_breakout.ts` (1H BBWP >50 from <20 compression, EMA21 direction, bypasses confluence), `confluence.ts` (scoring + EMA200 macro filter + per-strategy leverage)
 
 **Risk:** `manager.ts` (drawdown limits, pause, position cap=3), `sizing.ts` (calcMarginBasedSize: 5% margin), `state.ts` (bankroll/PnL tracking, Supabase hydration on restart)
 
@@ -93,7 +93,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **Command bus pattern:** frontend inserts `bot_commands` row → Supabase Realtime → bot claims atomically (`UPDATE WHERE status='pending'`) → executes → writes result back
 - **DRY_RUN gate:** `src/main.ts` skips order placement when `DRY_RUN=true`
 - **Margin sizing:** 5% of bankroll as margin, leverage applied on top. Portfolio compounds each trade.
-- **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S2` on VPS.
+- **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S2,S6` on VPS.
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
 - **Manual trades** register as `strategy: "manual"` — bot exit logic skips them, only native SL/TP closes.
 

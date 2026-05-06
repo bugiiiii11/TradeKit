@@ -1,5 +1,5 @@
 export type Direction = "long" | "short";
-export type StrategyId = "S1" | "S2" | "S3" | "manual";
+export type StrategyId = "S1" | "S2" | "S3" | "S6" | "manual";
 
 export interface Signal {
   direction: Direction;

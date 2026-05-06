@@ -53,7 +53,7 @@ export function evaluateS6(snap: S6Snapshot): Signal | null {
     barsSinceCompression <= COMPRESSION_LOOKBACK
   ) {
     const direction: Direction = close > ema21 ? "long" : "short";
-    signal = { direction, strategy: "S6" as any, stopDistancePct: S6_STOP_DISTANCE };
+    signal = { direction, strategy: "S6", stopDistancePct: S6_STOP_DISTANCE };
   }
 
   prevBbwp = bbwp;

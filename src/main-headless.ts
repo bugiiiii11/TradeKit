@@ -3,8 +3,8 @@
  *
  * Architecture:
  *   Hyperliquid WebSocket (15m) → local indicator computation
- *   → Strategy evaluation (S1/S2, S3 disabled)
- *   → Confluence scoring + macro filter
+ *   → Strategy evaluation (S1/S2/S6, S3 disabled)
+ *   → Confluence scoring + macro filter (S6 bypasses confluence)
  *   → Risk manager gate
  *   → Position sizing
  *   → Hyperliquid order execution
@@ -23,6 +23,7 @@ import type { IndicatorSnapshot } from "./tradingview/reader";
 import { evaluateS1, shouldExitS1 } from "./strategy/s1_ema_trend";
 import { evaluateS2, shouldExitS2 } from "./strategy/s2_mean_reversion";
 import { evaluateS3, shouldExitS3 } from "./strategy/s3_stoch_rsi";
+import { evaluateS6, shouldExitS6, resetS6ExitState, S6_STOP_DISTANCE } from "./strategy/s6_bbwp_breakout";
 import { scoreSignals, getLeverageForSignals } from "./strategy/confluence";
 import { calcMarginBasedSize } from "./risk/sizing";
 import { canTrade } from "./risk/manager";
@@ -63,9 +64,10 @@ const LEVERAGE_MULT = parseFloat(process.env.LEVERAGE_MULT ?? "0.25");
 
 let lastS1EvalTime = 0;
 let lastS2EvalTime = 0;
+let lastS6EvalTime = 0;
 
 interface ActivePosition {
-  strategy: "S1" | "S2" | "S3" | "manual";
+  strategy: "S1" | "S2" | "S3" | "S6" | "manual";
   direction: "long" | "short";
   entryPrice: number;
   entryTimestamp: string;
@@ -111,7 +113,7 @@ async function hydrateActivePositions(): Promise<void> {
     const s1Lev = Math.max(1, Math.round(10 * LEVERAGE_MULT));
     const s2Lev = Math.max(1, Math.round(8 * LEVERAGE_MULT));
     const s3Lev = Math.max(1, Math.round(5 * LEVERAGE_MULT));
-    let strategy: "S1" | "S2" | "S3" | "manual" = "manual";
+    let strategy: "S1" | "S2" | "S3" | "S6" | "manual" = "manual";
     if (tpOrders.length >= 3 && pos.leverage === s3Lev) strategy = "S3";
     else if (pos.leverage === s1Lev && s1Lev !== s2Lev) strategy = "S1";
     else if (pos.leverage === s2Lev && s2Lev !== s1Lev) strategy = "S2";
@@ -228,6 +230,13 @@ async function onBarClose(snapshots: {
       lastS1EvalTime = now;
     }
 
+    // S6: independent evaluation (1H time-gate, bypasses confluence)
+    let s6Signal: Signal | null = null;
+    if (ENABLED_STRATEGIES.includes("S6") && now - lastS6EvalTime >= 60 * 60 * 1000) {
+      s6Signal = evaluateS6({ bbwp: snap1H.bbwp, close: snap1H.close, ema21: snap1H.ema21 });
+      lastS6EvalTime = now;
+    }
+
     // 7. Confluence scoring
     const confluence = scoreSignals(signals, snap1D);
     const rawLeverage = getLeverageForSignals(signals);
@@ -247,143 +256,227 @@ async function onBarClose(snapshots: {
     });
     await writeRiskSnapshot({ state: getState(), source: "vps-bot" });
 
-    // 9. Early returns
+    // 9. Entry logic
     if (killed) {
       console.log(`[Bot-VPS] Killed — skipping entries.`);
       return;
     }
 
-    if (signals.length === 0) {
+    if (signals.length === 0 && !s6Signal) {
       console.log("[Bot-VPS] No signals this bar.");
       return;
     }
 
-    console.log(`[Bot-VPS] Signals: ${signals.map(s => `${s.strategy}:${s.direction}`).join(", ")}`);
-    console.log(`[Bot-VPS] Confluence: score=${confluence.score}, direction=${confluence.direction}`);
-
-    if (!confluence.direction || confluence.leverage === 0) {
-      console.log("[Bot-VPS] No trade (conflicting or filtered).");
-      return;
-    }
-
-    // 9b. Block if position already open (Hyperliquid has one isolated position per asset)
+    // Block all entries if position already open
     if (activePositions.length > 0) {
       const existing = activePositions.map(p => `${p.strategy}:${p.direction}`).join(", ");
-      const incoming = signals.map(s => `${s.strategy}:${s.direction}`).join(", ");
-      console.log(`[Bot-VPS] Entry blocked — position already open (${existing})`);
-      sendDiscord("signals",
-        `Entry BLOCKED — position already open\n${incoming} signal skipped\nOpen: ${existing}`,
-        Colors.orange,
-      );
-      return;
-    }
-
-    // 10. Sizing
-    const primarySignal = signals.find(s => s.strategy === "S1")
-      ?? signals.find(s => s.strategy === "S2")
-      ?? signals[0];
-
-    const entryPrice = snap15m.close;
-    const MARGIN_PCT = 0.05;
-    const sizing = calcMarginBasedSize(balance, MARGIN_PCT, entryPrice, primarySignal.stopDistancePct, tradeLeverage);
-
-    console.log(
-      `[Bot-VPS] Sizing: $${sizing.positionUsd.toFixed(2)} notional, ` +
-      `$${sizing.marginUsd.toFixed(2)} margin, ${tradeLeverage}x leverage`
-    );
-
-    // 11. Risk gate
-    const permission = canTrade(sizing);
-    if (!permission.allowed) {
-      console.log(`[Bot-VPS] Trade blocked: ${permission.reason}`);
-      sendDiscord("signals",
-        `Trade BLOCKED by risk manager\n${primarySignal.strategy} ${confluence.direction} — ${permission.reason}`,
-        Colors.red,
-      );
-      return;
-    }
-
-    // 12. Execute
-    const stopPrice = confluence.direction === "long"
-      ? entryPrice * (1 - primarySignal.stopDistancePct)
-      : entryPrice * (1 + primarySignal.stopDistancePct);
-
-    let txSig: string;
-    if (DRY_RUN) {
-      txSig = "DRY_RUN";
-      console.log(
-        `[DRY_RUN] Would ${primarySignal.strategy === "S2" ? "LIMIT" : "MARKET"} ` +
-        `${confluence.direction.toUpperCase()} ${sizing.positionBase.toFixed(6)} BTC ` +
-        `@ $${entryPrice.toFixed(2)} stop=$${stopPrice.toFixed(2)} ${tradeLeverage}x`
-      );
-    } else if (primarySignal.strategy === "S2") {
-      const limitPrice = snap1H.ema55;
-      txSig = await placeLimitOrder(confluence.direction, sizing.positionBase, limitPrice, tradeLeverage);
-    } else {
-      txSig = await placeMarketOrder(confluence.direction, sizing.positionBase, tradeLeverage);
-    }
-
-    let stopOid: string | undefined;
-    if (!DRY_RUN) {
-      stopOid = await setStopLoss(confluence.direction, stopPrice, sizing.positionBase);
-    }
-
-    // S3 TPs (only if S3 is enabled)
-    let tpPrices: number[] = [];
-    let tpOids: string[] = [];
-    if (primarySignal.strategy === "S3") {
-      const tpTargets = [
-        { pct: 0.01, portion: 0.33 },
-        { pct: 0.03, portion: 0.33 },
-        { pct: 0.05, portion: 0.34 },
+      const allSignals = [
+        ...signals.map(s => `${s.strategy}:${s.direction}`),
+        ...(s6Signal ? [`S6:${s6Signal.direction}`] : []),
       ];
-      tpPrices = tpTargets.map(({ pct }) =>
-        confluence.direction === "long" ? entryPrice * (1 + pct) : entryPrice * (1 - pct)
+      if (allSignals.length > 0) {
+        console.log(`[Bot-VPS] Entry blocked — position already open (${existing})`);
+        sendDiscord("signals",
+          `Entry BLOCKED — position already open\n${allSignals.join(", ")} signal(s) skipped\nOpen: ${existing}`,
+          Colors.orange,
+        );
+      }
+      return;
+    }
+
+    // --- S1/S2/S3 confluence entry ---
+    if (signals.length > 0) {
+      console.log(`[Bot-VPS] Signals: ${signals.map(s => `${s.strategy}:${s.direction}`).join(", ")}`);
+      console.log(`[Bot-VPS] Confluence: score=${confluence.score}, direction=${confluence.direction}`);
+
+      if (confluence.direction && confluence.leverage > 0) {
+        const primarySignal = signals.find(s => s.strategy === "S1")
+          ?? signals.find(s => s.strategy === "S2")
+          ?? signals[0];
+
+        const entryPrice = snap15m.close;
+        const MARGIN_PCT = 0.05;
+        const sizing = calcMarginBasedSize(balance, MARGIN_PCT, entryPrice, primarySignal.stopDistancePct, tradeLeverage);
+
+        console.log(
+          `[Bot-VPS] Sizing: $${sizing.positionUsd.toFixed(2)} notional, ` +
+          `$${sizing.marginUsd.toFixed(2)} margin, ${tradeLeverage}x leverage`
+        );
+
+        const permission = canTrade(sizing);
+        if (!permission.allowed) {
+          console.log(`[Bot-VPS] Trade blocked: ${permission.reason}`);
+          sendDiscord("signals",
+            `Trade BLOCKED by risk manager\n${primarySignal.strategy} ${confluence.direction} — ${permission.reason}`,
+            Colors.red,
+          );
+        } else {
+          const stopPrice = confluence.direction === "long"
+            ? entryPrice * (1 - primarySignal.stopDistancePct)
+            : entryPrice * (1 + primarySignal.stopDistancePct);
+
+          let txSig: string;
+          if (DRY_RUN) {
+            txSig = "DRY_RUN";
+            console.log(
+              `[DRY_RUN] Would ${primarySignal.strategy === "S2" ? "LIMIT" : "MARKET"} ` +
+              `${confluence.direction.toUpperCase()} ${sizing.positionBase.toFixed(6)} BTC ` +
+              `@ $${entryPrice.toFixed(2)} stop=$${stopPrice.toFixed(2)} ${tradeLeverage}x`
+            );
+          } else if (primarySignal.strategy === "S2") {
+            const limitPrice = snap1H.ema55;
+            txSig = await placeLimitOrder(confluence.direction, sizing.positionBase, limitPrice, tradeLeverage);
+          } else {
+            txSig = await placeMarketOrder(confluence.direction, sizing.positionBase, tradeLeverage);
+          }
+
+          let stopOid: string | undefined;
+          if (!DRY_RUN) {
+            stopOid = await setStopLoss(confluence.direction, stopPrice, sizing.positionBase);
+          }
+
+          let tpPrices: number[] = [];
+          let tpOids: string[] = [];
+          if (primarySignal.strategy === "S3") {
+            const tpTargets = [
+              { pct: 0.01, portion: 0.33 },
+              { pct: 0.03, portion: 0.33 },
+              { pct: 0.05, portion: 0.34 },
+            ];
+            tpPrices = tpTargets.map(({ pct }) =>
+              confluence.direction === "long" ? entryPrice * (1 + pct) : entryPrice * (1 - pct)
+            );
+            if (!DRY_RUN) {
+              const tpResults = await setScaledTakeProfits(confluence.direction, entryPrice, sizing.positionBase, tpTargets);
+              tpOids = tpResults.map(r => r.oid);
+            }
+          }
+
+          const entryTimestamp = new Date().toISOString();
+          activePositions.push({
+            strategy: primarySignal.strategy,
+            direction: confluence.direction,
+            entryPrice,
+            entryTimestamp,
+            sizeBase: sizing.positionBase,
+            stopPrice,
+            marginUsd: sizing.marginUsd,
+            riskDollar: sizing.riskDollar,
+            leverage: tradeLeverage,
+            confluenceScore: confluence.score,
+            stopDistancePct: primarySignal.stopDistancePct,
+            stopOid,
+            tpOids: tpOids.length > 0 ? tpOids : undefined,
+          });
+          recordTradeOpen(sizing.marginUsd);
+
+          logTradeOpen({
+            timestamp: entryTimestamp,
+            strategy: primarySignal.strategy,
+            direction: confluence.direction,
+            entry_price: entryPrice,
+            stop_loss: stopPrice,
+            take_profit: tpPrices.length > 0 ? tpPrices[0] : null,
+            leverage: tradeLeverage,
+            position_size_usd: sizing.positionUsd,
+            margin_used_usd: sizing.marginUsd,
+            risk_percent: MARGIN_PCT * 100,
+            confluence_score: confluence.score,
+            notes: `tx: ${txSig} | source: ${BOT_SOURCE}`,
+          });
+
+          sendDiscord("trades",
+            `${confluence.direction.toUpperCase()} ${primarySignal.strategy} opened\nEntry: $${entryPrice.toFixed(0)}\nSize: ${sizing.positionBase.toFixed(5)} BTC ($${sizing.positionUsd.toFixed(0)} notional)\nLeverage: ${tradeLeverage}x | SL: $${stopPrice.toFixed(0)}`,
+            confluence.direction === "long" ? Colors.green : Colors.red,
+          );
+        }
+      } else {
+        console.log("[Bot-VPS] No trade (conflicting or filtered).");
+      }
+    } else {
+      console.log("[Bot-VPS] No S1/S2/S3 signals this bar.");
+    }
+
+    // --- S6 independent entry (fallback — only when S1/S2/S3 didn't open a position) ---
+    if (s6Signal && activePositions.length === 0) {
+      const s6Leverage = Math.max(1, Math.round(8 * LEVERAGE_MULT));
+      const entryPrice = snap15m.close;
+      const MARGIN_PCT = 0.05;
+      const sizing = calcMarginBasedSize(balance, MARGIN_PCT, entryPrice, S6_STOP_DISTANCE, s6Leverage);
+
+      console.log(
+        `[Bot-VPS] S6 ${s6Signal.direction} signal | ` +
+        `$${sizing.positionUsd.toFixed(2)} notional, $${sizing.marginUsd.toFixed(2)} margin, ${s6Leverage}x leverage`
       );
-      if (!DRY_RUN) {
-        const tpResults = await setScaledTakeProfits(confluence.direction, entryPrice, sizing.positionBase, tpTargets);
-        tpOids = tpResults.map(r => r.oid);
+
+      const permission = canTrade(sizing);
+      if (!permission.allowed) {
+        console.log(`[Bot-VPS] S6 trade blocked: ${permission.reason}`);
+        sendDiscord("signals",
+          `S6 BLOCKED by risk manager\nS6 ${s6Signal.direction} — ${permission.reason}`,
+          Colors.red,
+        );
+      } else {
+        const stopPrice = s6Signal.direction === "long"
+          ? entryPrice * (1 - S6_STOP_DISTANCE)
+          : entryPrice * (1 + S6_STOP_DISTANCE);
+
+        let txSig: string;
+        if (DRY_RUN) {
+          txSig = "DRY_RUN";
+          console.log(
+            `[DRY_RUN] Would MARKET ${s6Signal.direction.toUpperCase()} ` +
+            `${sizing.positionBase.toFixed(6)} BTC @ $${entryPrice.toFixed(2)} ` +
+            `stop=$${stopPrice.toFixed(2)} ${s6Leverage}x`
+          );
+        } else {
+          txSig = await placeMarketOrder(s6Signal.direction, sizing.positionBase, s6Leverage);
+        }
+
+        let stopOid: string | undefined;
+        if (!DRY_RUN) {
+          stopOid = await setStopLoss(s6Signal.direction, stopPrice, sizing.positionBase);
+        }
+
+        const entryTimestamp = new Date().toISOString();
+        activePositions.push({
+          strategy: "S6",
+          direction: s6Signal.direction,
+          entryPrice,
+          entryTimestamp,
+          sizeBase: sizing.positionBase,
+          stopPrice,
+          marginUsd: sizing.marginUsd,
+          riskDollar: sizing.riskDollar,
+          leverage: s6Leverage,
+          confluenceScore: 0,
+          stopDistancePct: S6_STOP_DISTANCE,
+          stopOid,
+        });
+        recordTradeOpen(sizing.marginUsd);
+        resetS6ExitState();
+
+        logTradeOpen({
+          timestamp: entryTimestamp,
+          strategy: "S6",
+          direction: s6Signal.direction,
+          entry_price: entryPrice,
+          stop_loss: stopPrice,
+          take_profit: null,
+          leverage: s6Leverage,
+          position_size_usd: sizing.positionUsd,
+          margin_used_usd: sizing.marginUsd,
+          risk_percent: MARGIN_PCT * 100,
+          confluence_score: 0,
+          notes: `tx: ${txSig} | source: ${BOT_SOURCE}`,
+        });
+
+        sendDiscord("trades",
+          `${s6Signal.direction.toUpperCase()} S6 opened\nEntry: $${entryPrice.toFixed(0)}\nSize: ${sizing.positionBase.toFixed(5)} BTC ($${sizing.positionUsd.toFixed(0)} notional)\nLeverage: ${s6Leverage}x | SL: $${stopPrice.toFixed(0)}`,
+          s6Signal.direction === "long" ? Colors.green : Colors.red,
+        );
       }
     }
-
-    // 13. Record position
-    const entryTimestamp = new Date().toISOString();
-    activePositions.push({
-      strategy: primarySignal.strategy,
-      direction: confluence.direction,
-      entryPrice,
-      entryTimestamp,
-      sizeBase: sizing.positionBase,
-      stopPrice,
-      marginUsd: sizing.marginUsd,
-      riskDollar: sizing.riskDollar,
-      leverage: tradeLeverage,
-      confluenceScore: confluence.score,
-      stopDistancePct: primarySignal.stopDistancePct,
-      stopOid,
-      tpOids: tpOids.length > 0 ? tpOids : undefined,
-    });
-    recordTradeOpen(sizing.marginUsd);
-
-    logTradeOpen({
-      timestamp: entryTimestamp,
-      strategy: primarySignal.strategy,
-      direction: confluence.direction,
-      entry_price: entryPrice,
-      stop_loss: stopPrice,
-      take_profit: tpPrices.length > 0 ? tpPrices[0] : null,
-      leverage: tradeLeverage,
-      position_size_usd: sizing.positionUsd,
-      margin_used_usd: sizing.marginUsd,
-      risk_percent: MARGIN_PCT * 100,
-      confluence_score: confluence.score,
-      notes: `tx: ${txSig} | source: ${BOT_SOURCE}`,
-    });
-
-    sendDiscord("trades",
-      `${confluence.direction.toUpperCase()} ${primarySignal.strategy} opened\nEntry: $${entryPrice.toFixed(0)}\nSize: ${sizing.positionBase.toFixed(5)} BTC ($${sizing.positionUsd.toFixed(0)} notional)\nLeverage: ${tradeLeverage}x | SL: $${stopPrice.toFixed(0)}`,
-      confluence.direction === "long" ? Colors.green : Colors.red,
-    );
   } catch (err) {
     console.error("[Bot-VPS] Bar evaluation error:", err);
     sendDiscord("errors", `Bar evaluation error\n${err instanceof Error ? err.message : String(err)}`, Colors.red);
@@ -493,6 +586,13 @@ async function checkExits(
       const result = shouldExitS3(snap15m, pos.direction, pos.entryPrice, pos.entryTimestamp);
       shouldExit = result.exit;
       exitReason = result.reason;
+    } else if (pos.strategy === "S6") {
+      const result = shouldExitS6(
+        { bbwp: snap1H.bbwp, ema8: snap1H.ema8, ema55: snap1H.ema55 },
+        pos.direction,
+      );
+      shouldExit = result.exit;
+      exitReason = result.reason;
     }
 
     if (shouldExit) {
@@ -595,7 +695,7 @@ async function main(): Promise<void> {
   console.log("[Bot-VPS] Starting BTC Trading Bot (Headless)...");
   console.log(`[Bot-VPS] Mode: ${DRY_RUN ? "DRY RUN" : "LIVE"}`);
   console.log(`[Bot-VPS] Strategies: ${ENABLED_STRATEGIES.join(", ")}`);
-  console.log(`[Bot-VPS] Leverage multiplier: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x)`);
+  console.log(`[Bot-VPS] Leverage multiplier: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x, S6=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x)`);
   console.log(`[Bot-VPS] Bankroll: $${STARTING_BANKROLL}`);
   console.log(`[Bot-VPS] Source tag: ${BOT_SOURCE}`);
 
@@ -654,7 +754,7 @@ async function main(): Promise<void> {
   await consumer.start();
   console.log("[Bot-VPS] WebSocket consumer running — waiting for bar closes...");
   sendDiscord("status",
-    `Bot started\nStrategies: ${ENABLED_STRATEGIES.join(", ")}\nLeverage: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x)\nBalance: $${STARTING_BANKROLL}`,
+    `Bot started\nStrategies: ${ENABLED_STRATEGIES.join(", ")}\nLeverage: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x, S6=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x)\nBalance: $${STARTING_BANKROLL}`,
     Colors.blue,
   );
 
