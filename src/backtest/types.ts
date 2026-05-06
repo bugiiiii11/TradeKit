@@ -2,6 +2,8 @@
  * Shared types for the backtesting engine.
  */
 
+import type { FundingRate } from "./funding-loader";
+
 export interface Candle {
   timestamp: number; // bar open time, epoch ms
   open: number;
@@ -85,6 +87,10 @@ export interface BacktestConfig {
   enabledStrategies?: StrategyId[];
   /** Enable daily EMA regime filter for S3 entries. */
   regimeFilter?: boolean;
+  /** Historical funding rates (sorted). When provided, replaces constant funding estimate. */
+  fundingRates?: FundingRate[];
+  /** Enable S7 funding rate momentum filter for S1/S2 entries. */
+  s7Filter?: boolean;
 }
 
 /** A signal that was blocked by the regime filter. */
@@ -126,4 +132,6 @@ export interface BacktestResult {
   stats: BacktestStats;
   /** Signals blocked by the regime filter (only populated when regimeFilter=true). */
   filteredSignals?: FilteredSignal[];
+  /** Number of S1/S2 entries blocked by S7 funding filter. */
+  s7Blocked?: number;
 }

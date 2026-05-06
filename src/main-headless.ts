@@ -24,7 +24,9 @@ import { evaluateS1, shouldExitS1 } from "./strategy/s1_ema_trend";
 import { evaluateS2, shouldExitS2 } from "./strategy/s2_mean_reversion";
 import { evaluateS3, shouldExitS3 } from "./strategy/s3_stoch_rsi";
 import { evaluateS6, shouldExitS6, resetS6ExitState, S6_STOP_DISTANCE } from "./strategy/s6_bbwp_breakout";
+import { evaluateS5, shouldExitS5, getPendingSignal, S5_STOP_DISTANCE } from "./strategy/s5_cascade";
 import { recordFundingRate, checkFundingFilter } from "./strategy/s7_funding_filter";
+import { startWebhookServer } from "./webhook/server";
 import { scoreSignals, getLeverageForSignals } from "./strategy/confluence";
 import { calcMarginBasedSize } from "./risk/sizing";
 import { canTrade } from "./risk/manager";
@@ -64,13 +66,16 @@ const ENABLED_STRATEGIES = (process.env.ENABLED_STRATEGIES ?? "S1,S2,S3")
 const LEVERAGE_MULT = parseFloat(process.env.LEVERAGE_MULT ?? "0.25");
 
 const S7_FUNDING_FILTER = (process.env.S7_FUNDING_FILTER ?? "false").toLowerCase() === "true";
+const S5_ENABLED = (process.env.S5_ENABLED ?? "false").toLowerCase() === "true";
+const S5_WEBHOOK_PORT = parseInt(process.env.S5_WEBHOOK_PORT ?? "3456", 10);
+const S5_WEBHOOK_SECRET = process.env.S5_WEBHOOK_SECRET ?? "";
 
 let lastS1EvalTime = 0;
 let lastS2EvalTime = 0;
 let lastS6EvalTime = 0;
 
 interface ActivePosition {
-  strategy: "S1" | "S2" | "S3" | "S6" | "manual";
+  strategy: "S1" | "S2" | "S3" | "S5" | "S6" | "manual";
   direction: "long" | "short";
   entryPrice: number;
   entryTimestamp: string;
@@ -501,6 +506,94 @@ async function onBarClose(snapshots: {
         );
       }
     }
+
+    // --- S5 cascade entry (independent — only when no position open + S5 enabled) ---
+    if (S5_ENABLED && activePositions.length === 0) {
+      const pending = getPendingSignal();
+      if (pending) {
+        console.log(
+          `[Bot-VPS] S5 cascade pending: severity=${pending.severity} ` +
+          `impact=$${(pending.estimatedImpactUsd / 1e6).toFixed(0)}M ` +
+          `age=${((Date.now() - pending.receivedAt) / 1000).toFixed(0)}s`,
+        );
+      }
+      const s5Signal = evaluateS5();
+      if (s5Signal) {
+        const s5Leverage = Math.max(1, Math.round(8 * LEVERAGE_MULT));
+        const entryPrice = snap15m.close;
+        const MARGIN_PCT = 0.05;
+        const sizing = calcMarginBasedSize(balance, MARGIN_PCT, entryPrice, S5_STOP_DISTANCE, s5Leverage);
+
+        console.log(
+          `[Bot-VPS] S5 CASCADE SHORT | ` +
+          `$${sizing.positionUsd.toFixed(2)} notional, $${sizing.marginUsd.toFixed(2)} margin, ${s5Leverage}x leverage`,
+        );
+
+        const permission = canTrade(sizing);
+        if (!permission.allowed) {
+          console.log(`[Bot-VPS] S5 trade blocked: ${permission.reason}`);
+          sendDiscord("signals",
+            `S5 CASCADE BLOCKED by risk manager\n${permission.reason}`,
+            Colors.red,
+          );
+        } else {
+          const stopPrice = entryPrice * (1 + S5_STOP_DISTANCE);
+
+          let txSig: string;
+          if (DRY_RUN) {
+            txSig = "DRY_RUN";
+            console.log(
+              `[DRY_RUN] Would MARKET SHORT ${sizing.positionBase.toFixed(6)} BTC ` +
+              `@ $${entryPrice.toFixed(2)} stop=$${stopPrice.toFixed(2)} ${s5Leverage}x (S5 CASCADE)`,
+            );
+          } else {
+            txSig = await placeMarketOrder("short", sizing.positionBase, s5Leverage);
+          }
+
+          let stopOid: string | undefined;
+          if (!DRY_RUN) {
+            stopOid = await setStopLoss("short", stopPrice, sizing.positionBase);
+          }
+
+          const entryTimestamp = new Date().toISOString();
+          activePositions.push({
+            strategy: "S5",
+            direction: "short",
+            entryPrice,
+            entryTimestamp,
+            sizeBase: sizing.positionBase,
+            stopPrice,
+            marginUsd: sizing.marginUsd,
+            riskDollar: sizing.riskDollar,
+            leverage: s5Leverage,
+            confluenceScore: 0,
+            stopDistancePct: S5_STOP_DISTANCE,
+            stopOid,
+          });
+          recordTradeOpen(sizing.marginUsd);
+
+          logTradeOpen({
+            timestamp: entryTimestamp,
+            strategy: "S5",
+            direction: "short",
+            entry_price: entryPrice,
+            stop_loss: stopPrice,
+            take_profit: null,
+            leverage: s5Leverage,
+            position_size_usd: sizing.positionUsd,
+            margin_used_usd: sizing.marginUsd,
+            risk_percent: MARGIN_PCT * 100,
+            confluence_score: 0,
+            notes: `tx: ${txSig} | source: ${BOT_SOURCE} | S5 CASCADE`,
+          });
+
+          sendDiscord("trades",
+            `CASCADE SHORT S5 opened\nEntry: $${entryPrice.toFixed(0)}\nSize: ${sizing.positionBase.toFixed(5)} BTC ($${sizing.positionUsd.toFixed(0)} notional)\nLeverage: ${s5Leverage}x | SL: $${stopPrice.toFixed(0)}`,
+            Colors.red,
+          );
+        }
+      }
+    }
   } catch (err) {
     console.error("[Bot-VPS] Bar evaluation error:", err);
     sendDiscord("errors", `Bar evaluation error\n${err instanceof Error ? err.message : String(err)}`, Colors.red);
@@ -608,6 +701,10 @@ async function checkExits(
       if (shouldExit) exitReason = "s2_exit_condition";
     } else if (pos.strategy === "S3") {
       const result = shouldExitS3(snap15m, pos.direction, pos.entryPrice, pos.entryTimestamp);
+      shouldExit = result.exit;
+      exitReason = result.reason;
+    } else if (pos.strategy === "S5") {
+      const result = shouldExitS5(pos.entryTimestamp, snap1H.bbwp);
       shouldExit = result.exit;
       exitReason = result.reason;
     } else if (pos.strategy === "S6") {
@@ -722,6 +819,7 @@ async function main(): Promise<void> {
   console.log(`[Bot-VPS] Leverage multiplier: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x, S6=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x)`);
   console.log(`[Bot-VPS] Bankroll: $${STARTING_BANKROLL}`);
   console.log(`[Bot-VPS] S7 funding filter: ${S7_FUNDING_FILTER ? "ON" : "OFF"}`);
+  console.log(`[Bot-VPS] S5 cascade: ${S5_ENABLED ? `ON (port ${S5_WEBHOOK_PORT})` : "OFF"}`);
   console.log(`[Bot-VPS] Source tag: ${BOT_SOURCE}`);
 
   // Hydrate risk state
@@ -766,6 +864,14 @@ async function main(): Promise<void> {
     },
   }, BOT_SOURCE);
 
+  // S5 webhook server (only if enabled + secret configured)
+  let webhookServer: ReturnType<typeof startWebhookServer> | null = null;
+  if (S5_ENABLED && S5_WEBHOOK_SECRET) {
+    webhookServer = startWebhookServer({ port: S5_WEBHOOK_PORT, secret: S5_WEBHOOK_SECRET });
+  } else if (S5_ENABLED && !S5_WEBHOOK_SECRET) {
+    console.warn("[Bot-VPS] S5 enabled but S5_WEBHOOK_SECRET not set — webhook server NOT started");
+  }
+
   printPortfolioStats(STARTING_BANKROLL);
 
   // Start WebSocket candle consumer
@@ -790,6 +896,7 @@ async function main(): Promise<void> {
   const shutdown = async (sig: string) => {
     console.warn(`[Bot-VPS] Received ${sig} — shutting down`);
     sendDiscord("status", `Bot shutting down (${sig})`, Colors.orange);
+    if (webhookServer) webhookServer.close();
     await consumer.stop();
     await stopCommandSubscription().catch(() => {});
     process.exit(0);

@@ -25,6 +25,7 @@ import { evaluateS6, resetS6State, S6_STOP_DISTANCE } from "../strategy/s6_bbwp_
 import { scoreSignals, getLeverageForSignals } from "../strategy/confluence";
 import type { IndicatorSnapshot, Timeframe } from "../tradingview/reader";
 import { computeRegimeMap, type RegimeInfo } from "./regime-filter";
+import { getFundingRateAt, type FundingRate } from "./funding-loader";
 import type {
   AlignedBar,
   BarData,
@@ -40,9 +41,13 @@ import type {
 const TAKER_FEE = 0.00045; // 0.045% per side → 0.09% round-trip (Tier 0)
 const SLIPPAGE_BPS = 0;    // additional cost per side in basis points (0 = disabled)
 
-// Funding rate: +0.01% per 8h = 0.00125% per hour (conservative bull-market estimate)
-const DEFAULT_HOURLY_FUNDING_RATE = 0.0000125; // 0.00125%
+const DEFAULT_HOURLY_FUNDING_RATE = 0.0000125; // 0.00125% per hour fallback
 const MS_PER_HOUR = 3_600_000;
+const MS_PER_8H = 8 * MS_PER_HOUR;
+
+// S7 funding filter constants (mirror s7_funding_filter.ts)
+const S7_LOOKBACK_BARS = 16; // 4 hours at 15m intervals
+const S7_MAX_HISTORY = 100;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -243,6 +248,10 @@ export function runBacktest(
   let accumulatedFunding = 0;
   let lastFundingHour = -1;
 
+  // S7 funding filter state (simulates live recordFundingRate + checkFundingFilter)
+  const s7History: number[] = [];
+  let s7Blocked = 0;
+
   // Regime filter: extract unique daily bars and pre-compute regime map
   let regimeMap: Map<number, RegimeInfo> | null = null;
   if (config.regimeFilter) {
@@ -278,11 +287,22 @@ export function runBacktest(
     if (openPos) {
       const currentHour = Math.floor(bar15m.timestamp / MS_PER_HOUR);
       if (currentHour !== lastFundingHour) {
-        // Longs pay positive funding, shorts receive it
         const dirMult = openPos.direction === "long" ? 1 : -1;
-        accumulatedFunding += openPos.notionalUsd * DEFAULT_HOURLY_FUNDING_RATE * dirMult;
+        let hourlyRate = DEFAULT_HOURLY_FUNDING_RATE;
+        if (config.fundingRates && config.fundingRates.length > 0) {
+          const rate8h = getFundingRateAt(config.fundingRates, bar15m.timestamp);
+          hourlyRate = rate8h / 8;
+        }
+        accumulatedFunding += openPos.notionalUsd * hourlyRate * dirMult;
         lastFundingHour = currentHour;
       }
+    }
+
+    // === S7: Record funding rate for filter (every 15m bar) ===
+    if (config.s7Filter && config.fundingRates && config.fundingRates.length > 0) {
+      const currentRate = getFundingRateAt(config.fundingRates, bar15m.timestamp);
+      s7History.push(currentRate);
+      if (s7History.length > S7_MAX_HISTORY) s7History.shift();
     }
 
     // === PHASE 1: EXIT CHECKS (before evaluate() updates module prev state) ===
@@ -369,6 +389,22 @@ export function runBacktest(
             }
           }
 
+          // S7 funding filter: block S1/S2 entries when funding velocity opposes direction
+          if (config.s7Filter && (primary.strategy === "S1" || primary.strategy === "S2")) {
+            if (s7History.length >= S7_LOOKBACK_BARS + 1) {
+              const current = s7History[s7History.length - 1];
+              const past = s7History[s7History.length - 1 - S7_LOOKBACK_BARS];
+              const velocity = current - past;
+              if ((dir === "long" && velocity < 0) || (dir === "short" && velocity > 0)) {
+                s7Blocked++;
+                prev15m = bar15m;
+                prev4H = bar4H;
+                prev1H = bar1H;
+                continue;
+              }
+            }
+          }
+
           const stopDistPct = primary.stopDistancePct;
           const marginUsd   = equity * config.marginPct;
           const notionalUsd = marginUsd * leverage;
@@ -447,6 +483,7 @@ export function runBacktest(
     equityCurve,
     stats: computeStats(trades, config.bankroll, equityCurve),
     filteredSignals: config.regimeFilter ? filteredSignals : undefined,
+    s7Blocked: config.s7Filter ? s7Blocked : undefined,
   };
 }
 

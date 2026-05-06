@@ -55,7 +55,7 @@ let lastS2EvalTime = 0;
 
 // Track active positions opened by this bot
 interface ActivePosition {
-  strategy: "S1" | "S2" | "S3" | "S6" | "manual";
+  strategy: "S1" | "S2" | "S3" | "S5" | "S6" | "manual";
   direction: "long" | "short";
   entryPrice: number;
   entryTimestamp: string;
