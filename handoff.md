@@ -98,7 +98,7 @@ Built HTTP webhook receiver for Flash DeFi liquidation cascade signals:
 - 15/15 integration tests pass (`src/scripts/test_webhook.ts`)
 - Integrated into `main-headless.ts` with env vars: `S5_ENABLED`, `S5_WEBHOOK_PORT`, `S5_WEBHOOK_SECRET`
 
-**Not deployed** — needs: `.env` config on VPS, OCI firewall port 3456, Flash webhook setup.
+**Deployed to VPS** — webhook listening on port 3456. Flash liquidation bots (`liq-navi`, `liq-scallop`, `liq-suilend`) run on the same VPS, so they POST to `localhost:3456` — no OCI firewall change needed.
 
 Files: `src/strategy/s5_cascade.ts` (new), `src/webhook/server.ts` (new), `src/scripts/test_webhook.ts` (new), `src/main-headless.ts` (S5 entry/exit + webhook start), `src/strategy/types.ts` ("S5" added to StrategyId), `src/logger/trade_logger.ts`, `src/main.ts`.
 
@@ -116,13 +116,13 @@ Committed: `971656d`, `dc1d933`. Pushed to origin.
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
 | 2026-05-06 | S1+S2+S6 at 0.5x leverage | S6 deployed but no entries yet (BBWP not in compression). Monitor first S6 trade. Balance ~$399. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
-| 2026-05-06 | S5 webhook NOT deployed | Code built + tested but VPS needs: `.env` vars, port 3456 open, Flash webhook URL. Deploy when Flash is ready. | Check with Flash team on webhook timeline |
+| 2026-05-06 | S5 webhook LIVE | Deployed on VPS port 3456. Flash bots on same VPS → localhost. Waiting for Flash to wire up the POST call. Monitor first cascade signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Deploy S5 to VPS** | low | Code ready. Add `.env` vars (`S5_ENABLED=true`, `S5_WEBHOOK_SECRET`, `S5_WEBHOOK_PORT=3456`), open OCI port, restart pm2. Then coordinate with Flash for webhook POST URL. |
+| 1 | **Wire Flash → S5 webhook** | low | S5 deployed on VPS. Flash bots are on same machine — need to add POST to `localhost:3456/webhook/cascade` in Flash's cascade detection logic. Integration guide shared. |
 | 2 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x. After ~10-15 trades at 0.5x with S1+S2+S6, bump to 1.0x. |
 | 3 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (Session 28). S1 filter toggle ready. Colleague finds setups on TV → we code + backtest. |
 | 4 | **S1 filter toggle from dashboard** | med | Frontend button to flip `S1_SKIP_DAILY_EMA200` without SSH. |

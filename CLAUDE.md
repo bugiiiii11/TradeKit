@@ -12,7 +12,7 @@
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
 - **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S6 at 0.5x leverage (S3 disabled)
-- **Strategy:** BTC perps, S1+S2+S6 active (S3 disabled, S7 parked — backtest -$3 PnL). S5 cascade receiver built, not deployed.
+- **Strategy:** BTC perps, S1+S2+S6 active (S3 disabled, S7 parked — backtest -$3 PnL). S5 cascade webhook LIVE on VPS (localhost:3456, Flash bots on same machine).
 - **Leverage:** S1=10x, S2=8x, S6=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
 - **S3 diagnostics:** enabled (Session 22) — logs every StochRSI cross with filter results
