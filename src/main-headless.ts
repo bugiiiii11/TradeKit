@@ -26,7 +26,7 @@ import { evaluateS3, shouldExitS3 } from "./strategy/s3_stoch_rsi";
 import { evaluateS6, shouldExitS6, resetS6ExitState, S6_STOP_DISTANCE } from "./strategy/s6_bbwp_breakout";
 import { evaluateS5, shouldExitS5, getPendingSignal, S5_STOP_DISTANCE } from "./strategy/s5_cascade";
 import { recordFundingRate, checkFundingFilter } from "./strategy/s7_funding_filter";
-import { startWebhookServer } from "./webhook/server";
+import { startWebhookServer, getCascadeHeartbeatStatus, resetCascadeHeartbeatCount } from "./webhook/server";
 import { scoreSignals, getLeverageForSignals } from "./strategy/confluence";
 import { calcMarginBasedSize } from "./risk/sizing";
 import { canTrade } from "./risk/manager";
@@ -789,6 +789,13 @@ function scheduleDailyDigest(): void {
         `Consecutive losses: ${s.consecutiveLosses}`,
         `Status: ${s.killed ? "KILLED" : s.pausedUntil > Date.now() ? "PAUSED" : "ACTIVE"}`,
       ];
+      if (S5_ENABLED) {
+        const hb = getCascadeHeartbeatStatus();
+        const ago = hb.lastAt > 0 ? `${((Date.now() - hb.lastAt) / 60_000).toFixed(0)}min ago` : "never";
+        const status = hb.lastAt > 0 && (Date.now() - hb.lastAt) > 2 * 3_600_000 ? "⚠️" : "✓";
+        lines.push(`S5 cascade: ${hb.count} heartbeats (last: ${ago}) ${status}`);
+        resetCascadeHeartbeatCount();
+      }
       sendDiscord("status", lines.join("\n"), Colors.blue);
     } catch (err) {
       console.error("[Bot-VPS] Digest error:", err);

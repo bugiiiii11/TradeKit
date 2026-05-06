@@ -12,6 +12,17 @@ import { sendDiscord, Colors } from "../notifications/discord";
 
 const VALID_SEVERITIES = new Set<CascadeSeverity>(["medium", "high", "critical"]);
 
+let cascadeHeartbeatCount = 0;
+let lastHeartbeatAt = 0;
+
+export function getCascadeHeartbeatStatus(): { count: number; lastAt: number } {
+  return { count: cascadeHeartbeatCount, lastAt: lastHeartbeatAt };
+}
+
+export function resetCascadeHeartbeatCount(): void {
+  cascadeHeartbeatCount = 0;
+}
+
 interface WebhookConfig {
   port: number;
   secret: string;
@@ -111,14 +122,19 @@ export function startWebhookServer(config: WebhookConfig): http.Server {
         `impact=$${(sig.estimatedImpactUsd / 1e6).toFixed(0)}M ` +
         `imminent=${sig.imminentCount} chains=${sig.chains.join(",") || "unknown"}`,
       );
+      cascadeHeartbeatCount++;
+      lastHeartbeatAt = Date.now();
 
-      sendDiscord("signals",
-        `CASCADE SIGNAL received\nSeverity: ${sig.severity.toUpperCase()}\n` +
-        `Impact: $${(sig.estimatedImpactUsd / 1e6).toFixed(0)}M | ` +
-        `Imminent: ${sig.imminentCount} positions\n` +
-        `Chains: ${sig.chains.join(", ") || "unknown"}`,
-        Colors.red,
-      );
+      if (sig.severity === "high" || sig.severity === "critical") {
+        sendDiscord("signals",
+          `CASCADE SIGNAL — ${sig.severity.toUpperCase()}\n` +
+          `Impact: $${(sig.estimatedImpactUsd / 1e6).toFixed(0)}M | ` +
+          `Imminent: ${sig.imminentCount} positions\n` +
+          `Chains: ${sig.chains.join(", ") || "unknown"}\n` +
+          `SHORT entry will evaluate on next bar close`,
+          Colors.red,
+        );
+      }
 
       json(res, 200, { accepted: true, severity: sig.severity, receivedAt: sig.receivedAt });
     } catch (err) {
