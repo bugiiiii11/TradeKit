@@ -23,8 +23,11 @@
       "Bash(which:*)",
       "Bash(date:*)",
       "Bash(curl:*)",
+      "Bash(ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98:*)",
 
       "Read",
+      "Edit",
+      "Write",
       "Glob",
       "Grep",
 
