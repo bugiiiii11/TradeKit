@@ -11,6 +11,7 @@
  */
 
 import type { Signal, Direction } from "./types";
+import { sendDiscord, Colors } from "../notifications/discord";
 
 const S6_STOP_DISTANCE = 0.02;
 const COMPRESSION_THRESHOLD = 20;
@@ -44,16 +45,23 @@ export function evaluateS6(snap: S6Snapshot): Signal | null {
     barsSinceCompression++;
   }
 
+  const crossUp = prevBbwp !== null && prevBbwp < EXPANSION_THRESHOLD && bbwp >= EXPANSION_THRESHOLD;
+  const recentCompression = barsSinceCompression <= COMPRESSION_LOOKBACK;
+
+  const diagMsg =
+    `BBWP=${bbwp.toFixed(1)} prev=${prevBbwp?.toFixed(1) ?? "—"} ` +
+    `cross50=${crossUp ? "YES" : "no"} ` +
+    `compress=${recentCompression ? `${barsSinceCompression}bars(ok)` : `${barsSinceCompression === Infinity ? "never" : barsSinceCompression + "bars"}(FAIL)`} ` +
+    `EMA21=${close > ema21 ? "above(long)" : "below(short)"}`;
+  console.log(`[S6-diag] ${diagMsg}`);
+  sendDiscord("signals", `S6 Hourly Eval\n${diagMsg}`, Colors.blue);
+
   let signal: Signal | null = null;
 
-  if (
-    prevBbwp !== null &&
-    prevBbwp < EXPANSION_THRESHOLD &&
-    bbwp >= EXPANSION_THRESHOLD &&
-    barsSinceCompression <= COMPRESSION_LOOKBACK
-  ) {
+  if (crossUp && recentCompression) {
     const direction: Direction = close > ema21 ? "long" : "short";
     signal = { direction, strategy: "S6", stopDistancePct: S6_STOP_DISTANCE };
+    console.log(`[S6-diag] >>> SIGNAL: ${direction.toUpperCase()}`);
   }
 
   prevBbwp = bbwp;
