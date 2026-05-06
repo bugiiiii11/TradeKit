@@ -1,6 +1,6 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-24). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-25). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
 
 ## What Was Done (Session 1) — Drift→Hyperliquid pivot + full bot wiring
@@ -856,4 +856,30 @@ Adapted Flash's `regimeFilter.ts` (5d/21d daily EMA trend detection) to block S3
 **Verdict:** Adopt filter as shared infra for S4 grid (where Flash originally used it). Keep S3 disabled in production.
 
 **Files:** `src/backtest/regime-filter.ts` (new), `src/scripts/backtest_regime.ts` (new A/B comparison), engine.ts + types.ts updated. Committed: `8fa1207`.
+
+---
+
+## What Was Done (Session 25) — VPS deep dive + filter relaxation backtest
+
+### Supabase Realtime Log Noise Fix
+Investigated `[Commands] Realtime subscription CHANNEL_ERROR` flooding VPS error logs. The subscription auto-recovers via Supabase's built-in retry, but logged every single retry attempt. Fixed to only log state transitions (first error + recovery with retry count). Files: `src/db/commands.ts`. Committed: `e808d63`.
+
+### VPS Bot Deep Dive (~40h of logs)
+Bot healthy: 15h uptime, 182 bar closes, WebSocket stable, all 3 strategies evaluating. Zero trades — market conditions not meeting entry criteria:
+- **S3:** 28 crosses detected, 6 had BBWP<40, but OB/OS extremes never aligned with EMA21 proximity
+- **S2:** 20 evals, 7 had BBWP<35, but `1H-EMA=bear` in ALL 20 evaluations (never once bullish)
+- **S1:** One LONG cross detected but blocked by `Daily-EMA200=below`
+- BBWP spiked from 18 to 97.2 over 24h (massive vol expansion)
+
+### Filter Relaxation A/B Backtest
+Made S3 OB/OS thresholds and S2 1H-EMA requirement configurable (`S3_CONFIG`, `S2_CONFIG`). Ran 4-variant comparison on 379-day / 24-month Binance data. All relaxations rejected — extra trades are net-negative. Current filters are already optimal. S1 remains the portfolio driver (10 trades, 70% WR, +$79).
+
+Files: `src/strategy/s2_mean_reversion.ts`, `src/strategy/s3_stoch_rsi.ts` (configurable thresholds), `src/scripts/backtest_relaxed.ts` (new). Committed: `3c35125`.
+
+### Concurrent Position Bug Fixes (critical)
+Found two critical bugs when bot started trading:
+1. **Leverage conflict:** S3 (1x) couldn't open when S2 (2x) was open — Hyperliquid rejects leverage decreases on isolated positions.
+2. **Stop cleanup nuke:** `closePosition` canceled ALL reduce-only BTC orders, including stops belonging to other strategies' open positions.
+
+**Fixes:** Block new entries when any position already open, track SL/TP order IDs per position, cancel only that position's specific OIDs on exit. Files: `src/main-headless.ts`, `src/hyperliquid/orders.ts`. Committed: `85255e2`. Deployed to VPS.
 

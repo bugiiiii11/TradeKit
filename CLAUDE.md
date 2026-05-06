@@ -8,11 +8,11 @@
 - **Bankroll:** ~$500.26 USDC on Hyperliquid mainnet (Perps account)
 - **Master wallet:** `0x3a8a318097017aCE0db8276ea435F26DE8674C46` (MetaMask)
 - **API wallet:** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (trade-only, no withdraw)
-- **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$398 USDC, separate account)
+- **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$399 USDC, separate account)
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
-- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S3 at 0.5x leverage
-- **Strategy:** BTC perps, S1+S2 active (S3 disabled — confirmed dead in 484-day backtest)
+- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2 at 0.5x leverage (S3 disabled)
+- **Strategy:** BTC perps, S1+S2 active (S3 disabled — net -$82 in 379-day backtest, profit factor 0.51)
 - **Leverage:** S1=10x, S2=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
 - **S3 diagnostics:** enabled (Session 22) — logs every StochRSI cross with filter results
@@ -60,7 +60,7 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 - Supabase clients: `lib/supabase/client.ts` (browser), `server.ts` (SSR), `proxy.ts` (auth)
 - Config: `frontend/next.config.js` (CJS only — see Conventions)
 
-**Config & docs:** `BTC_TRADING_STRATEGY_KB.md` (strategy source of truth), `.env` (secrets — NEVER read/commit), `launch_tradingview.ps1` (TV with CDP), `FRONTEND_ANALYSIS.md` (frontend architecture)
+**Config & docs:** `BTC_TRADING_STRATEGY_KB.md` (strategy source of truth), `.env` (secrets — NEVER read/commit), `launch_tradingview.ps1` (TV with CDP), `FRONTEND_ANALYSIS.md` (frontend architecture), `docs/grid-trading-lessons-flash.md` (Flash project grid lessons for S4)
 
 ## Test Scripts
 
@@ -79,6 +79,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 | `backtest.ts` | Strategy replay: `--days 90 --bankroll 500 --margin 5` |
 | `backtest_binance.ts` | 12-month replay: `--bankroll 500 --strategies S1,S2 --pmarp-period 20 --pmarp-lookback 350` |
 | `backtest_relaxed.ts` | A/B filter relaxation: S3 OB/OS 75/25, S2 no 1H-EMA, both — `--bankroll 500 --margin 5` |
+| `backtest_s1_filter.ts` | S1 Daily-EMA200 filter A/B: baseline vs relaxed, portfolio + S1-only isolation |
 | `validate_indicators.ts` | Compare local indicators vs TradingView (needs TV Desktop + CDP) |
 | `download_binance.ts` | Download BTC 15m klines from Binance: `--months=24` |
 | `migrate_source_columns.ts` | Add source/target columns for two-bot architecture |
@@ -92,6 +93,9 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **Command bus pattern:** frontend inserts `bot_commands` row → Supabase Realtime → bot claims atomically (`UPDATE WHERE status='pending'`) → executes → writes result back
 - **DRY_RUN gate:** `src/main.ts` skips order placement when `DRY_RUN=true`
 - **Margin sizing:** 5% of bankroll as margin, leverage applied on top. Portfolio compounds each trade.
+- **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S2` on VPS.
+- **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
+- **Manual trades** register as `strategy: "manual"` — bot exit logic skips them, only native SL/TP closes.
 
 ## Untested Code Paths
 

@@ -38,54 +38,6 @@ Fill lookup sorted oldest-first, matching a previous trade's fill at similar pri
 
 ---
 
-## What Was Done (Session 25) — VPS deep dive + filter relaxation backtest
-
-### Supabase Realtime Log Noise Fix
-Investigated `[Commands] Realtime subscription CHANNEL_ERROR` flooding VPS error logs. The subscription auto-recovers via Supabase's built-in retry, but logged every single retry attempt. Fixed to only log state transitions (first error + recovery with retry count). Files: `src/db/commands.ts`. Committed: `e808d63`.
-
-### VPS Bot Deep Dive (~40h of logs)
-Bot healthy: 15h uptime, 182 bar closes, WebSocket stable, all 3 strategies evaluating. Zero trades — market conditions not meeting entry criteria:
-- **S3:** 28 crosses detected, 6 had BBWP<40, but OB/OS extremes never aligned with EMA21 proximity
-- **S2:** 20 evals, 7 had BBWP<35, but `1H-EMA=bear` in ALL 20 evaluations (never once bullish)
-- **S1:** One LONG cross detected but blocked by `Daily-EMA200=below`
-- BBWP spiked from 18 to 97.2 over 24h (massive vol expansion)
-
-### Filter Relaxation A/B Backtest
-Made S3 OB/OS thresholds and S2 1H-EMA requirement configurable (`S3_CONFIG`, `S2_CONFIG`). Ran 4-variant comparison on 379-day / 24-month Binance data:
-
-| Variant | Trades | Win Rate | PnL | Max DD | Verdict |
-|---------|--------|----------|-----|--------|---------|
-| Baseline | 474 | 30.4% | +$25.50 | 10.7% | Current |
-| S3 75/25 | 531 (+57) | 30.9% | +$22.79 | 11.0% | REJECT |
-| S2 no 1H-EMA | 477 (+3) | 30.4% | +$25.44 | 10.7% | REJECT |
-| Both | 532 (+58) | 31.0% | +$23.65 | 10.8% | REJECT |
-
-**All relaxations rejected.** Extra trades are net-negative. Current filters are already optimal. S1 remains the portfolio driver (10 trades, 70% WR, +$79).
-
-Files: `src/strategy/s2_mean_reversion.ts`, `src/strategy/s3_stoch_rsi.ts` (configurable thresholds), `src/scripts/backtest_relaxed.ts` (new). Committed: `3c35125`.
-
-### Concurrent Position Bug Fixes (critical)
-Second VPS check revealed bot had started trading (first S2+S3 live trades!). Found two critical bugs:
-
-1. **Leverage conflict:** S3 (1x) couldn't open when S2 (2x) was open — Hyperliquid rejects leverage decreases on isolated positions. Crashed entire bar evaluation via `ensureLeverage`.
-2. **Stop cleanup nuke:** `closePosition` canceled ALL reduce-only BTC orders, including stops belonging to other strategies' open positions. Left S2 naked after S3 exit.
-
-**Root cause:** Hyperliquid has one isolated position per asset, but bot treated S2/S3 as independent positions.
-
-**Fixes:**
-- Block new entries when any position already open (`activePositions.length > 0` guard)
-- Track SL/TP order IDs per position (`stopOid`, `tpOids[]` on `ActivePosition`)
-- Cancel only that position's specific OIDs on exit, call `closePosition(dir, skipStopCleanup=true)`
-- `closePosition` gains `skipStopCleanup` param (default false — kill switch still gets blanket cleanup)
-
-Files: `src/main-headless.ts`, `src/hyperliquid/orders.ts`. Committed: `85255e2`. Deployed to VPS, pm2 restarted.
-
-**Trade results:** ~5 S2 shorts over 2 days, net loss -$1.64 at 0.25x leverage. Balance: $398.94 → $397.30. First live S2 trades confirmed working.
-
-**Known gap:** `activePositions` not hydrated from Hyperliquid on restart — bot opened a new S2 immediately after restart because it didn't know about existing positions. Pre-existing issue, low priority (positions have native stops).
-
----
-
 ## What Was Done (Session 27) — Health check + leverage scale-up
 
 ### VPS Health Check
@@ -96,21 +48,52 @@ Changed `LEVERAGE_MULT` from 0.25 to 0.5 in VPS `.env`. Restarted with `pm2 rest
 
 ---
 
+## What Was Done (Session 28) — Manual trade bug fix + S1 filter + S3 disabled
+
+### VPS Deep Dive
+Bot healthy: 42h uptime, 0 restarts, 73MB memory. Balance $397.85 → $399.31. Found a manual trade (20x long, TPs $84.9k/$85.8k) was closed by the bot's S3 exit logic after 75 min at +$2.62 instead of riding to target. Also found S3 short #1 stopped out (-$0.23), S3 short #2 opened and stopped out. Martin reported a Krown indicator bullish signal matching the manual trade's targets.
+
+### Manual Trade Bug Fix (critical)
+Manual trades placed via command bus were registered with `strategy: "S3"`, causing S3 exit logic to close them prematurely. Fixed in both bots:
+- Added `"manual"` to `StrategyId` type
+- `registerManualPosition` now uses `strategy: "manual"`
+- `checkExits` skips manual positions — only native SL/TP can close them
+- Hydration defaults to `"manual"` for unrecognized leverage (safer than S3)
+
+Files: `src/strategy/types.ts`, `src/main-headless.ts`, `src/main.ts`, `src/logger/trade_logger.ts`. Committed: `f2a808d`. Deployed to VPS.
+
+### S1 Daily-EMA200 Filter Configurable
+S1 longs were blocked by `Daily-EMA200=below`, missing trend reversal entries. Made the filter configurable:
+- `S1_CONFIG.requireDailyEma200` driven by `S1_SKIP_DAILY_EMA200` env var (default: false = filter on)
+- Confluence macro filter respects S1 exemption when configured
+
+Backtest on 379 days: neutral in mixed portfolio (S1: 10→13 trades, -$1.09), positive in S1-only isolation (+4 trades, +$3.89, lower DD). Keep filter on by default, toggle via env var when conviction is high.
+
+Files: `src/strategy/s1_ema_trend.ts`, `src/strategy/confluence.ts`, `src/scripts/backtest_s1_filter.ts` (new). Committed: `ac8c261`. Deployed to VPS.
+
+### S3 Cost-Benefit Analysis + Disabled
+Ran S1+S2+S3 vs S1+S2-only backtest on 379 days. S3 standalone: 779 trades, -$81.95, profit factor 0.51, Sharpe -6.86. Removing S3: PnL +$25→+$81, DD 10.7%→4.8%, Sharpe 0.57→3.55. Disabled S3 on VPS via `ENABLED_STRATEGIES=S1,S2` env var. S3 code fully intact, re-enable anytime.
+
+### Flash Grid Lessons
+Got production grid trading knowledge transfer from Flash project (4 months live on Base). Saved to `docs/grid-trading-lessons-flash.md`. Key lessons: rapid momentum detector, sell-only mode during pause, volatility-adaptive spacing, auto-recenter with daily cap, state persistence after every fill.
+
+---
+
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-05 | VPS bot at 0.5x leverage | Scaled from 0.25x to 0.5x (Session 27). S26 fixes stable (42h clean run). Balance $398.14. Monitor first few trades at new sizing for correct margin/leverage. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
+| 2026-05-06 | S1+S2 only at 0.5x leverage | S3 disabled (Session 28). Monitor first S1/S2 trades without S3 position slot competition. Balance $399.31. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **S4 Grid strategy research** | med | Regime filter now exists as shared infra (`src/backtest/regime-filter.ts`). Build grid strategy on Hyperliquid perps, backtest on 24-month Binance data with funding rates + regime filter. See auto-memory for full analysis. |
-| 2 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x (Session 27). After ~10-15 trades at 0.5x confirm stable sizing, bump to 1.0x. Same process: edit `.env` + `pm2 restart --update-env`. |
-| 3 | **Port concurrent position fix to desktop bot** | low | `main.ts` has same `closePosition` + `cancelOpenBtcStops` pattern. Not urgent (desktop bot rarely used). |
-| 4 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
-| 5 | **Remove diagnostic logging when stable** | low | Once trading consistently, remove S1/S2/S3 diag sends (or keep signals channel muted). |
+| 1 | **S4 Grid strategy design + backtest** | med | Flash lessons in `docs/grid-trading-lessons-flash.md`. Regime filter ready. Build perps grid on Hyperliquid, backtest on 24-month Binance data. Key: rapid momentum detector, sell-only mode, volatility-adaptive spacing. |
+| 2 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x. After ~10-15 trades at 0.5x with S1+S2 only, bump to 1.0x. Same process: edit `.env` + `pm2 restart --update-env`. |
+| 3 | **S1 filter toggle from dashboard** | med | Frontend button to flip `S1_SKIP_DAILY_EMA200` without SSH. Enables Martin to react to Krown-type signals quickly. |
+| 4 | **S3 re-evaluation** | low | S3 disabled (net -$82, PF 0.51). Re-enable anytime via `ENABLED_STRATEGIES=S1,S2,S3`. Consider S4 grid as replacement for S3's "frequent small trades" niche. |
+| 5 | **TradingView indicator validation** | low | Compare local vs TV values. Run `validate_indicators.ts` when TV Desktop available. |
 | 6 | **New strategy development** | med | Colleague finds setups on TV → writes rules → we code + backtest → deploy. |
