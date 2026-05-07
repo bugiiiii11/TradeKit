@@ -30,8 +30,6 @@
       "Bash(rmdir:*)",
       "Bash(cp:*)",
       "Bash(mv:*)",
-      "Bash(ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98:*)",
-
       "Read",
       "Edit",
       "Write",
