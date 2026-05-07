@@ -5,13 +5,13 @@
 
 ## Current State
 
-- **Bankroll:** ~$500.26 USDC on Hyperliquid mainnet (Perps account)
+- **Bankroll:** ~$500 USDC on Hyperliquid mainnet (desktop Perps account)
 - **Master wallet:** `0x3a8a318097017aCE0db8276ea435F26DE8674C46` (MetaMask)
 - **API wallet:** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (trade-only, no withdraw)
-- **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$399 USDC, separate account)
+- **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$390 USDC, separate account)
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
-- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S6 at 0.5x leverage (S3 disabled)
+- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S6 at 1.0x leverage (S3 disabled)
 - **Strategy:** BTC perps, S1+S2+S6 active (S3 disabled, S7 parked — backtest -$3 PnL). S5 cascade webhook LIVE on VPS (localhost:3456, Flash bots on same machine).
 - **Leverage:** S1=10x, S2=8x, S6=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
@@ -87,6 +87,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 | `download_funding.ts` | Download BTC funding rates from Binance: `--months=26` |
 | `backtest_s7.ts` | S7 funding filter A/B: baseline vs S7 filter on S1+S2+S6 |
 | `test_webhook.ts` | S5 webhook server integration tests (15 cases) |
+| `investigate_balance.ts` | Query Hyperliquid API for fills, funding, ledger events (read-only, any wallet) |
 | `migrate_source_columns.ts` | Add source/target columns for two-bot architecture |
 
 ## Conventions
@@ -102,7 +103,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
 - **S5_ENABLED**, **S5_WEBHOOK_PORT** (default 3456), **S5_WEBHOOK_SECRET** env vars: cascade webhook receiver. Disabled by default.
 - **S7_FUNDING_FILTER** env var: parked (backtest -$3 PnL). Do not enable without new validation.
-- **Manual trades** register as `strategy: "manual"` — bot exit logic skips them, only native SL/TP closes.
+- **Manual trades** register as `strategy: "manual"` — bot exit logic skips them, only native SL/TP closes. Hydration uses trade-log cross-check (not leverage heuristic) to distinguish bot vs web UI positions (Session 32 fix).
 
 ## Untested Code Paths
 
@@ -112,6 +113,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
 
 **Operational:**
+- Hydration trade-log cross-check with real open position (deployed Session 32, not yet exercised)
 - Command handler failure path (`status='failed'` write-back)
 - MCP reconnect under real TradingView crash (only synthetic retry tested)
 - Log sink `beforeExit` flush + buffer overflow drop-oldest
@@ -125,7 +127,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 
 **Portfolio:** max concurrent=3, max exposure=60%, daily DD=10%→24h pause, weekly DD=15%→48h pause, consecutive losses=3→4h pause
 
-**Per-trade:** 5% margin × strategy leverage (S1: 10x→$250, S2: 8x→$200, S3: 5x→$125 notional at $500 bankroll)
+**Per-trade:** 5% margin × strategy leverage (S1: 10x→$390, S2: 8x→$312, S6: 8x→$312 notional at ~$390 VPS bankroll)
 
 ## Background Processes
 

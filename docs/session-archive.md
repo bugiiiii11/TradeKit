@@ -1,7 +1,35 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+## What Was Done (Session 29) — S4 Grid strategy backtest (not viable)
+
+### Grid Backtest Engine
+Built a separate grid backtest engine (`src/backtest/grid-engine.ts`) — grids manage N concurrent cells vs 1 position, so the directional engine couldn't be extended. Reuses existing data pipeline (Binance loader → aggregator → aligner).
+
+Files: `src/strategy/s4_grid.ts` (config, types, helpers), `src/backtest/grid-engine.ts` (simulation engine), `src/scripts/backtest_grid.ts` (CLI). Committed: `aaeedd8`.
+
+### 9-Config Parameter Sweep
+Tested across spacing (0.3%–2.0%), levels (3–10), recenter policies (aggressive/slow/disabled), and regime filter on/off. 379-day window on Binance data.
+
+**Best result:** -$6.38 (-1.3%) with 0.8% spacing, 5 levels, zero recenters, no regime filter. But grid was only active 5.3% of the time — 84 round-trips in 379 days.
+
+### Root Cause: Structural Mismatch
+- **Recenters are fatal:** every config with recentering showed recenter losses > gross profit (-$64 to -$438)
+- **Without recenters, grid is dormant 95%:** BTC exits 8% range in days, doesn't return
+- **Funding NOT the killer:** only -$4/year on long side — confirmed via per-side tracking
+- **Flash vs S4:** Flash works because spot (zero holding cost, local mean-reversion from DEX arb). BTC perps trend too much.
+
+### S6 BBWP Breakout Backtest
+Validated S6 (BBWP volatility breakout) on 379-day Binance data. S6 standalone: 29 trades, +$71, 62% win rate, 1.87 profit factor. Combined S1+S2+S6 portfolio: +$168 (+33.6%), 2x the S1+S2 baseline (+$81), with only 1.3% more drawdown. S6 bypasses confluence — independent entry as fallback when S1/S2 don't fire.
+
+Files: `src/strategy/s6_bbwp_breakout.ts` (new), `src/backtest/engine.ts` (S6 integrated), `src/scripts/backtest_s6.ts` (new). Committed: `bc539d8`.
+
+### Conclusion
+Both S3 (scalp) and S4 (grid) confirm: **BTC perps favor trend-following (S1, S2), not mean-reversion.** S4 code preserved for future experiments on mean-reverting instruments. S6 validated and ready for live integration.
+
+---
 
 ## What Was Done (Session 27) — Health check + leverage scale-up
 

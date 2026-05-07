@@ -12,34 +12,6 @@
 
 ---
 
-## What Was Done (Session 29) — S4 Grid strategy backtest (not viable)
-
-### Grid Backtest Engine
-Built a separate grid backtest engine (`src/backtest/grid-engine.ts`) — grids manage N concurrent cells vs 1 position, so the directional engine couldn't be extended. Reuses existing data pipeline (Binance loader → aggregator → aligner).
-
-Files: `src/strategy/s4_grid.ts` (config, types, helpers), `src/backtest/grid-engine.ts` (simulation engine), `src/scripts/backtest_grid.ts` (CLI). Committed: `aaeedd8`.
-
-### 9-Config Parameter Sweep
-Tested across spacing (0.3%–2.0%), levels (3–10), recenter policies (aggressive/slow/disabled), and regime filter on/off. 379-day window on Binance data.
-
-**Best result:** -$6.38 (-1.3%) with 0.8% spacing, 5 levels, zero recenters, no regime filter. But grid was only active 5.3% of the time — 84 round-trips in 379 days.
-
-### Root Cause: Structural Mismatch
-- **Recenters are fatal:** every config with recentering showed recenter losses > gross profit (-$64 to -$438)
-- **Without recenters, grid is dormant 95%:** BTC exits 8% range in days, doesn't return
-- **Funding NOT the killer:** only -$4/year on long side — confirmed via per-side tracking
-- **Flash vs S4:** Flash works because spot (zero holding cost, local mean-reversion from DEX arb). BTC perps trend too much.
-
-### S6 BBWP Breakout Backtest
-Validated S6 (BBWP volatility breakout) on 379-day Binance data. S6 standalone: 29 trades, +$71, 62% win rate, 1.87 profit factor. Combined S1+S2+S6 portfolio: +$168 (+33.6%), 2x the S1+S2 baseline (+$81), with only 1.3% more drawdown. S6 bypasses confluence — independent entry as fallback when S1/S2 don't fire.
-
-Files: `src/strategy/s6_bbwp_breakout.ts` (new), `src/backtest/engine.ts` (S6 integrated), `src/scripts/backtest_s6.ts` (new). Committed: `bc539d8`.
-
-### Conclusion
-Both S3 (scalp) and S4 (grid) confirm: **BTC perps favor trend-following (S1, S2), not mean-reversion.** S4 code preserved for future experiments on mean-reverting instruments. S6 validated and ready for live integration.
-
----
-
 ## What Was Done (Session 30) — S6 BBWP Breakout live integration
 
 ### S6 Live Integration
@@ -115,21 +87,47 @@ Committed: `971656d`, `dc1d933`, `c58f9e1`, `63ead03`, `50d8cb5`. All pushed.
 
 ---
 
+## What Was Done (Session 32) — Hydration fix + leverage scale-up
+
+### Balance Investigation ($9 Drop)
+Wrote `src/scripts/investigate_balance.ts` — queries Hyperliquid's `userFillsByTime`, `userFunding`, and `userNonFundingLedgerUpdates` APIs directly (read-only, no private key needed). Found 63 fills in 14 days on VPS wallet: -$6.47 closed PnL + -$2.10 fees + -$0.05 funding = -$8.62. Root cause: Martin placed manual trades via Hyperliquid web UI (0.01 BTC, ~$1000 notional) — bot hydrated them as S1/S2 based on leverage, applied exit logic, closed them at a loss.
+
+### Hydration Fix (P1)
+Replaced leverage-heuristic strategy guessing in `hydrateActivePositions()` with trade-log cross-check. On restart, bot reads `trades/trade_log.json` for open records (exit_price === null). Positions matching a log entry get the logged strategy; positions with no match are tagged `"manual"` and skipped by exit logic. This prevents the bot from interfering with web UI trades.
+
+Files: `src/main-headless.ts` (hydration rewrite, lines 121-173). Committed: `cb3da8e`.
+
+### Leverage Scale-Up (P2)
+Changed `LEVERAGE_MULT` from 0.5 to 1.0 in VPS `.env`. Effective leverage now: S1=10x, S2=8x, S6=8x. Notional sizing doubled (~$40 positions). Rationale: 30 trades at 0.5x validated stability; fee drag (0.09% RT) was eating profits on ~$20 positions. Deployed in same restart as hydration fix.
+
+### Backtest Data Refresh
+Ran `download_binance.ts --months=26`. Klines now cover March 2024 → May 7, 2026 (76,548 rows, 26 months). April 2026 partial replaced with full month, May 2026 partial added. Funding rates were already current from Session 31.
+
+### S2 Confluence Analysis (P3 — analysis only, no code change)
+S2's real gate is the **macro filter** (confluence.ts:137-150), not the confluence score. S2 alone scores 3/10 (enough to trade), but `applyMacroFilter()` kills S2 longs when BTC < Daily EMA200 (current market). S2 standalone contributed ~$2/year in backtests. Relaxing S2 filters was tested in Session 25 and rejected. Recommendation: leave S2 as-is; its value is as a confluence booster for S1, not standalone.
+
+### Settings Cleanup
+Moved machine-specific SSH permission from `.claude/settings.json` to `settings.local.json`. Committed: `705a91c`.
+
+---
+
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-06 | S1+S2+S6 at 0.5x leverage | S6 deployed but no entries yet (BBWP not in compression). Monitor first S6 trade. Balance ~$399. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
+| 2026-05-07 | S1+S2+S6 at 1.0x leverage | Scaled from 0.5x. First trades at full leverage need monitoring — validate sizing, fee impact, SL placement. Balance ~$390. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
+| 2026-05-07 | Hydration fix deployed | Trade-log cross-check live. Untested with real position — next restart with an open position will validate. Should show `[trade-log]` or `[external (skip exit logic)]`. | Check startup logs after next restart |
 | 2026-05-06 | S5 cascade pipe LIVE | Full pipe working: Flash `liq-morpho-eth` (Contabo) → SSH tunnel → TradeKit webhook (OCI2). Hourly heartbeats confirmed. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Scale to full leverage (1.0x)** | low | Currently at 0.5x. After ~10-15 trades at 0.5x with S1+S2+S6, bump to 1.0x. |
-| 2 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (Session 28). S1 filter toggle ready. Colleague finds setups on TV → we code + backtest. |
+| 1 | **Monitor first trades at 1.0x** | low | Scaled from 0.5x (Session 32). Validate sizing (~$40 notional), fee proportionality, SL placement at full leverage. |
+| 2 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (Session 28). Hydration fix (Session 32) now protects web UI trades from bot interference. |
 | 3 | **S1 filter toggle from dashboard** | med | Frontend button to flip `S1_SKIP_DAILY_EMA200` without SSH. |
-| 4 | **S3 re-evaluation** | low | Code intact, re-enable via `ENABLED_STRATEGIES=S1,S2,S3,S6`. Revisit if Martin fine-tunes StochRSI. |
-| 5 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding becomes available (1h granularity). |
+| 4 | **Run backtest on refreshed data** | low | 26-month klines through May 7. Quick validation: `npx ts-node src/scripts/backtest_binance.ts --strategies S1,S2,S6 --bankroll 500`. |
+| 5 | **S3 re-evaluation** | low | Code intact, re-enable via `ENABLED_STRATEGIES=S1,S2,S3,S6`. Revisit if Martin fine-tunes StochRSI. |
+| 6 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding becomes available (1h granularity). |
