@@ -40,7 +40,7 @@ import {
 import { placeMarketOrder, placeLimitOrder, closePosition, cancelOrder, setStopLoss, setScaledTakeProfits } from "./hyperliquid/orders";
 import { getBalance, getOpenPositions, getFundingRate, getUserFills, getOpenBtcTriggerOrders } from "./hyperliquid/account";
 import type { PositionInfo } from "./hyperliquid/account";
-import { logTradeOpen, logTradeClose } from "./logger/trade_logger";
+import { logTradeOpen, logTradeClose, readAll as readTradeLog } from "./logger/trade_logger";
 import {
   writeMarketSnapshot,
   writeRiskSnapshot,
@@ -118,27 +118,34 @@ async function hydrateActivePositions(): Promise<void> {
     const stopDistancePct = Math.abs(pos.entryPrice - stopPrice) / pos.entryPrice;
     const riskDollar = stopDistancePct * pos.entryPrice * pos.sizeBase;
 
-    const s1Lev = Math.max(1, Math.round(10 * LEVERAGE_MULT));
-    const s2Lev = Math.max(1, Math.round(8 * LEVERAGE_MULT));
-    const s3Lev = Math.max(1, Math.round(5 * LEVERAGE_MULT));
-    let strategy: "S1" | "S2" | "S3" | "S6" | "manual" = "manual";
-    if (tpOrders.length >= 3 && pos.leverage === s3Lev) strategy = "S3";
-    else if (pos.leverage === s1Lev && s1Lev !== s2Lev) strategy = "S1";
-    else if (pos.leverage === s2Lev && s2Lev !== s1Lev) strategy = "S2";
+    // Match position to bot-originated trade via trade log (not leverage heuristic).
+    // If no open record exists in the log, this position was opened externally (web UI).
+    const openTrades = readTradeLog().filter(r => r.exit_price === null);
+    const matchingTrade = openTrades.find(
+      (r) => r.direction === pos.direction &&
+             Math.abs(r.entry_price - pos.entryPrice) / pos.entryPrice < 0.005
+    );
+    let strategy: "S1" | "S2" | "S3" | "S5" | "S6" | "manual" = matchingTrade
+      ? matchingTrade.strategy
+      : "manual";
 
     let entryTimestamp: string;
-    try {
-      const fills = await getUserFills(Date.now() - 48 * 60 * 60 * 1000);
-      const entrySide: "B" | "A" = pos.direction === "long" ? "B" : "A";
-      const entryFill = fills
-        .filter(f => f.side === entrySide && Math.abs(f.closedPnl) < 0.01)
-        .sort((a, b) => b.time - a.time)
-        .find(f => Math.abs(f.price - pos.entryPrice) / pos.entryPrice < 0.005);
-      entryTimestamp = entryFill
-        ? new Date(entryFill.time).toISOString()
-        : new Date().toISOString();
-    } catch {
-      entryTimestamp = new Date().toISOString();
+    if (matchingTrade) {
+      entryTimestamp = matchingTrade.timestamp;
+    } else {
+      try {
+        const fills = await getUserFills(Date.now() - 48 * 60 * 60 * 1000);
+        const entrySide: "B" | "A" = pos.direction === "long" ? "B" : "A";
+        const entryFill = fills
+          .filter(f => f.side === entrySide && Math.abs(f.closedPnl) < 0.01)
+          .sort((a, b) => b.time - a.time)
+          .find(f => Math.abs(f.price - pos.entryPrice) / pos.entryPrice < 0.005);
+        entryTimestamp = entryFill
+          ? new Date(entryFill.time).toISOString()
+          : new Date().toISOString();
+      } catch {
+        entryTimestamp = new Date().toISOString();
+      }
     }
 
     activePositions.push({
@@ -157,11 +164,12 @@ async function hydrateActivePositions(): Promise<void> {
       tpOids: tpOrders.length > 0 ? tpOrders.map(o => String(o.oid)) : undefined,
     });
 
+    const source = matchingTrade ? "trade-log" : "external (skip exit logic)";
     console.log(
       `[Bot-VPS] Hydrated position: ${strategy} ${pos.direction} ` +
       `@ $${pos.entryPrice.toFixed(0)}, ${pos.sizeBase} BTC, ${pos.leverage}x, ` +
       `SL=$${stopPrice.toFixed(0)}${slOrder ? "" : " (estimated)"}, ` +
-      `${tpOrders.length} TP(s), entry=${entryTimestamp.slice(0, 19)}Z`
+      `${tpOrders.length} TP(s), entry=${entryTimestamp.slice(0, 19)}Z [${source}]`
     );
   }
 
