@@ -57,7 +57,7 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 
 **Frontend** (Next.js 16 + React 19 + Tailwind v4 + shadcn base-nova):
 - Pages: dashboard, market-data, trades, strategies, automation, backtests (all under `(app)` route group)
-- Components: `manual-trade-card.tsx`, `kill-switch-button.tsx`, `mobile-nav.tsx`, `backtest-tabs.tsx`
+- Components: `bot-status-card.tsx` (health + controls), `strategy-controls.tsx` (toggles + leverage), `manual-trade-card.tsx`, `kill-switch-button.tsx`, `mobile-nav.tsx`, `backtest-tabs.tsx`
 - Auth: email/password login at `/login`, proxy-based auth check
 - Supabase clients: `lib/supabase/client.ts` (browser), `server.ts` (SSR), `proxy.ts` (auth)
 - Config: `frontend/next.config.js` (CJS only — see Conventions)

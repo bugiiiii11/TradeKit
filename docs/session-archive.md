@@ -1,7 +1,15 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-30). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-31). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+## What Was Done (Session 31) — S7 backtest validation + S5 webhook receiver
+
+VPS health check: bot healthy, balance $399.31. S7 funding rate backtest: downloaded 2,372 Binance funding rates, integrated actual rates into engine. S7 filter result: -$3.01 PnL delta (blocks more winners than losers) — parked.
+
+S5 cascade webhook receiver built and deployed: `src/strategy/s5_cascade.ts` (SHORT-only, 4% stop, 8h max hold), `src/webhook/server.ts` (Bearer auth). Deployed to VPS on port 3456, Flash `liq-morpho-eth` wired via SSH tunnel from Contabo. 15/15 integration tests pass. Discord tuned: heartbeat spam removed from `#tradekit-signals`, added to 2h status digest.
+
+Committed: `971656d`, `dc1d933`, `c58f9e1`, `63ead03`, `50d8cb5`.
 
 ## What Was Done (Session 30) — S6 BBWP Breakout live integration
 
