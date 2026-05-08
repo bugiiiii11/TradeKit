@@ -98,11 +98,14 @@ async function main(): Promise<void> {
   // Step 5: decision gate
   console.log("\n=== DECISION GATE ===");
   const { stats } = result;
-  const strategies = ["S1", "S2", "S3"] as const;
+  const strategies = ["S1", "S2", "S3", "S6"] as const;
   let viable = 0;
+  let evaluated = 0;
 
   for (const id of strategies) {
     const s = stats.byStrategy[id];
+    if (!s || s.trades === 0) continue;
+    evaluated++;
     const verdict =
       s.trades < 15
         ? "INSUFFICIENT DATA (<15 trades)"
@@ -119,10 +122,10 @@ async function main(): Promise<void> {
 
   if (viable === 0) {
     console.log("\n  RESULT: No strategies show positive expectancy.");
-    console.log("  → VPS headless project should NOT proceed without strategy rework.");
+    console.log("  → Review strategy parameters before deploying.");
   } else {
-    console.log(`\n  RESULT: ${viable}/3 strategies viable.`);
-    console.log("  → Proceed to Phase 1 (headless WebSocket migration).");
+    console.log(`\n  RESULT: ${viable}/${evaluated} strategies viable.`);
+    console.log("  → Strategies with positive expectancy are deployment-ready.");
   }
 
   // Persist to Supabase
