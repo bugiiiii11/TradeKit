@@ -12,7 +12,7 @@
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
 - **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S6 at 1.0x leverage (S3 disabled)
-- **Strategy:** BTC perps, S1+S2+S6 active (S3 disabled, S7 parked — backtest -$3 PnL). S5 cascade webhook LIVE on VPS (localhost:3456, Flash bots on same machine).
+- **Strategy:** BTC perps, S1+S6 active (S2 disabled — net drag per 26mo backtest, S3 disabled, S7 parked). S5 cascade webhook LIVE on VPS (localhost:3456, Flash bots on same machine).
 - **Leverage:** S1=10x, S2=8x, S6=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
 - **S3 diagnostics:** enabled (Session 22) — logs every StochRSI cross with filter results
@@ -99,7 +99,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **Command bus pattern:** frontend inserts `bot_commands` row → Supabase Realtime → bot claims atomically (`UPDATE WHERE status='pending'`) → executes → writes result back
 - **DRY_RUN gate:** `src/main.ts` skips order placement when `DRY_RUN=true`
 - **Margin sizing:** 5% of bankroll as margin, leverage applied on top. Portfolio compounds each trade.
-- **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S2,S6` on VPS.
+- **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S6` on VPS (S2 disabled Session 33).
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
 - **S5_ENABLED**, **S5_WEBHOOK_PORT** (default 3456), **S5_WEBHOOK_SECRET** env vars: cascade webhook receiver. Disabled by default.
 - **S7_FUNDING_FILTER** env var: parked (backtest -$3 PnL). Do not enable without new validation.

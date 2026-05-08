@@ -1,7 +1,40 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-30). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+## What Was Done (Session 30) — S6 BBWP Breakout live integration
+
+### S6 Live Integration
+Integrated S6 into the VPS bot (`main-headless.ts`):
+- S6 evaluation on 1H bar closes (same time-gate as S2), bypasses confluence
+- Restructured entry flow: S1/S2/S3 confluence first → S6 independent fallback if no position opened
+- S6 entry: 8x base leverage (4x at current 0.5x mult), 2% stop, market order
+- S6 exit: `shouldExitS6()` — BBWP cycle complete (>85 → <35) or EMA8/55 reverse cross on 1H
+- Goes through risk manager (position cap, drawdown checks, margin sizing)
+- Single-position model preserved: S1/S2 get priority, S6 only enters when slot is empty
+
+### Type Updates
+Added `"S6"` to `StrategyId` in `types.ts`, `ActivePosition` in both bots, `TradeRecord` in trade logger. Removed `as any` cast from `s6_bbwp_breakout.ts`.
+
+### Deployment
+- Pushed to origin: `6fd18b0`
+- VPS: `ENABLED_STRATEGIES=S1,S2,S6`, bot restarted via pm2
+- Startup logs confirm: `Strategies: S1, S2, S6 | Leverage: 0.5x (S1=5x, S2=4x, S6=4x)`
+
+### Known Limitation
+S6 uses same base leverage as S2 (8x). On restart hydration, can't disambiguate S6 vs S2 positions by leverage alone — defaults to S2. Acceptable since both have similar stop distances and the SL is always set natively on Hyperliquid.
+
+### S6 Diagnostics
+Added `[S6-diag]` logging on every 1H evaluation — shows BBWP, prev BBWP, cross50 pass/fail, compression recency, EMA21 direction. Same pattern as S2-diag. Deployed: `1d42a2f`.
+
+### Backtest Verification
+Ran S1+S2+S6 combined backtest on 379-day Binance data: **+$168.25 (+33.6%), 137 trades, PF 1.86, Sharpe 3.38**. Matches the S29 validated result exactly. Integration is correct.
+
+### S7 Funding Rate Momentum Filter
+Built optional S1/S2 entry filter (`src/strategy/s7_funding_filter.ts`). Records funding rate on every 15m bar close, computes 4-hour velocity delta. Blocks entries when funding velocity opposes trade direction. **Disabled by default** — enable with `S7_FUNDING_FILTER=true` in VPS `.env`. No backtest validation (historical funding data not available). Deployed: `ac85bed`.
+
+---
 
 ## What Was Done (Session 29) — S4 Grid strategy backtest (not viable)
 

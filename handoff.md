@@ -12,39 +12,6 @@
 
 ---
 
-## What Was Done (Session 30) — S6 BBWP Breakout live integration
-
-### S6 Live Integration
-Integrated S6 into the VPS bot (`main-headless.ts`):
-- S6 evaluation on 1H bar closes (same time-gate as S2), bypasses confluence
-- Restructured entry flow: S1/S2/S3 confluence first → S6 independent fallback if no position opened
-- S6 entry: 8x base leverage (4x at current 0.5x mult), 2% stop, market order
-- S6 exit: `shouldExitS6()` — BBWP cycle complete (>85 → <35) or EMA8/55 reverse cross on 1H
-- Goes through risk manager (position cap, drawdown checks, margin sizing)
-- Single-position model preserved: S1/S2 get priority, S6 only enters when slot is empty
-
-### Type Updates
-Added `"S6"` to `StrategyId` in `types.ts`, `ActivePosition` in both bots, `TradeRecord` in trade logger. Removed `as any` cast from `s6_bbwp_breakout.ts`.
-
-### Deployment
-- Pushed to origin: `6fd18b0`
-- VPS: `ENABLED_STRATEGIES=S1,S2,S6`, bot restarted via pm2
-- Startup logs confirm: `Strategies: S1, S2, S6 | Leverage: 0.5x (S1=5x, S2=4x, S6=4x)`
-
-### Known Limitation
-S6 uses same base leverage as S2 (8x). On restart hydration, can't disambiguate S6 vs S2 positions by leverage alone — defaults to S2. Acceptable since both have similar stop distances and the SL is always set natively on Hyperliquid.
-
-### S6 Diagnostics
-Added `[S6-diag]` logging on every 1H evaluation — shows BBWP, prev BBWP, cross50 pass/fail, compression recency, EMA21 direction. Same pattern as S2-diag. Deployed: `1d42a2f`.
-
-### Backtest Verification
-Ran S1+S2+S6 combined backtest on 379-day Binance data: **+$168.25 (+33.6%), 137 trades, PF 1.86, Sharpe 3.38**. Matches the S29 validated result exactly. Integration is correct.
-
-### S7 Funding Rate Momentum Filter
-Built optional S1/S2 entry filter (`src/strategy/s7_funding_filter.ts`). Records funding rate on every 15m bar close, computes 4-hour velocity delta. Blocks entries when funding velocity opposes trade direction. **Disabled by default** — enable with `S7_FUNDING_FILTER=true` in VPS `.env`. No backtest validation (historical funding data not available). Deployed: `ac85bed`.
-
----
-
 ## What Was Done (Session 31) — S7 backtest validation + S5 webhook receiver
 
 ### VPS Health Check
@@ -111,23 +78,45 @@ Moved machine-specific SSH permission from `.claude/settings.json` to `settings.
 
 ---
 
+## What Was Done (Session 33) — 26-month backtest validation, S2 disabled
+
+### 26-Month Backtest
+Ran S1+S2+S6 on full 26-month Binance data (March 2024 → May 2026, 76k rows, 429-day window after warmup). Results weaker than the 12-month window: **+$133.66 (+26.7%), 156 trades, PF 1.59, Sharpe 2.53**. Extra months added unfavorable regimes.
+
+Per-strategy: S1 +$87 (9 trades, 78% WR — sniper), S6 +$76 (105 trades, 46% WR — workhorse), **S2 -$30 (42 trades, 31% WR — net drag)**.
+
+### S2 Removal Confirmed
+Ran S1+S6-only backtest: **+$165.74 (+33.1%), 124 trades, PF 1.92, Sharpe 3.45**. Every metric improved. S6 picked up 10 extra trades from freed position slots. S1 gained slightly (+$87→$89).
+
+### S2 Disabled on VPS
+Changed `ENABLED_STRATEGIES=S1,S6` in VPS `.env`, restarted pm2. Startup confirms: `Strategies: S1, S6`. S2 code untouched — can be re-enabled for future experiments. No code changes this session.
+
+### Balance Note
+VPS balance $370.63 (down from $390 in S32). Zero bot trades — drop is from Martin's manual web UI trades. Risk state shows `dailyPnl=$-26.03`. Hydration fix (S32) prevents bot interference with manual trades, but manual trade losses are Martin's domain.
+
+### Decision Gate Bug (backlogged)
+Backtest reporter's automated verdict doesn't evaluate S6 (only checks S1/S2/S3). Reports "no positive expectancy" despite S6 having 105 trades at +$76. Low priority — doesn't affect live bot.
+
+---
+
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-07 | S1+S2+S6 at 1.0x leverage | Scaled from 0.5x. First trades at full leverage need monitoring — validate sizing, fee impact, SL placement. Balance ~$390. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
-| 2026-05-07 | Hydration fix deployed | Trade-log cross-check live. Untested with real position — next restart with an open position will validate. Should show `[trade-log]` or `[external (skip exit logic)]`. | Check startup logs after next restart |
-| 2026-05-06 | S5 cascade pipe LIVE | Full pipe working: Flash `liq-morpho-eth` (Contabo) → SSH tunnel → TradeKit webhook (OCI2). Hourly heartbeats confirmed. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
+| 2026-05-08 | S1+S6 at 1.0x leverage | S2 disabled (S33). Monitor first S1/S6 trades without S2 blocking slots. Balance ~$370. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
+| 2026-05-07 | Hydration fix deployed | Trade-log cross-check live. Untested with real position — next restart with an open position will validate. | Check startup logs after next restart |
+| 2026-05-06 | S5 cascade pipe LIVE | Full pipe working. Hourly heartbeats confirmed. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Monitor first trades at 1.0x** | low | Scaled from 0.5x (Session 32). Validate sizing (~$40 notional), fee proportionality, SL placement at full leverage. |
-| 2 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (Session 28). Hydration fix (Session 32) now protects web UI trades from bot interference. |
-| 3 | **S1 filter toggle from dashboard** | med | Frontend button to flip `S1_SKIP_DAILY_EMA200` without SSH. |
-| 4 | **Run backtest on refreshed data** | low | 26-month klines through May 7. Quick validation: `npx ts-node src/scripts/backtest_binance.ts --strategies S1,S2,S6 --bankroll 500`. |
-| 5 | **S3 re-evaluation** | low | Code intact, re-enable via `ENABLED_STRATEGIES=S1,S2,S3,S6`. Revisit if Martin fine-tunes StochRSI. |
-| 6 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding becomes available (1h granularity). |
+| 1 | **Monitor first trades at 1.0x (S1+S6)** | low | S2 removed, S6 gets more slots. Validate sizing, fee impact at full leverage. |
+| 2 | **Dashboard control panel (Tier 1)** | med | Strategy toggles (S1/S6 on/off), S1 filter toggle, leverage slider, live bot status card. All via existing command bus pattern. ~1-2 sessions. |
+| 3 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
+| 4 | **Decision gate bug fix** | low | Backtest reporter doesn't evaluate S6. Quick fix in `src/backtest/reporter.ts`. |
+| 5 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked (current mean-reversion approach loses on BTC perps). |
+| 6 | **S3 re-evaluation** | low | Same as S2 — mean-reversion on BTC perps is structurally unfavorable. Revisit if Martin fine-tunes StochRSI. |
+| 7 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding becomes available. |
