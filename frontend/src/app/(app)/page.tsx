@@ -5,11 +5,9 @@ import {
   Gauge,
   Layers,
   LineChart,
-  OctagonX,
-  ShieldAlert,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
-import { KillSwitchButton } from "@/components/kill-switch-button";
+import { BotStatusCard } from "@/components/bot-status-card";
 import { ManualTradeCard } from "@/components/manual-trade-card";
 import { AnimateIn } from "@/components/animate-in";
 import { Badge } from "@/components/ui/badge";
@@ -30,9 +28,7 @@ import {
 } from "@/components/ui/table";
 import {
   formatFundingRate,
-  formatPercent,
   formatPrice,
-  formatRelativeTime,
   formatTime,
   formatUsd,
 } from "@/lib/format";
@@ -46,6 +42,7 @@ type MarketSnapshot = {
   timeframes: unknown;
   macro_filter: "bullish" | "bearish" | "neutral" | null;
   confluence_score: number | null;
+  source: string | null;
 };
 
 type RiskSnapshot = {
@@ -93,6 +90,7 @@ export default async function DashboardPage() {
     { data: riskRows },
     { data: logRows },
     { data: positionRows },
+    { data: toggleRows },
   ] = await Promise.all([
     supabase
       .from("market_snapshots")
@@ -110,6 +108,13 @@ export default async function DashboardPage() {
       .order("ts", { ascending: false })
       .limit(20),
     supabase.from("positions").select("*"),
+    supabase
+      .from("bot_commands")
+      .select("type, result")
+      .in("type", ["toggle_strategy", "toggle_s1_filter", "set_leverage"])
+      .eq("status", "done")
+      .order("finished_at", { ascending: false })
+      .limit(10),
   ]);
 
   const market = (marketRows ?? []) as MarketSnapshot[];
@@ -118,30 +123,41 @@ export default async function DashboardPage() {
   const logs = (logRows ?? []) as BotLog[];
   const positions = (positionRows ?? []) as Position[];
 
+  const lastStrategyToggle = (toggleRows ?? []).find(
+    (r: { type: string }) => r.type === "toggle_strategy",
+  ) as { result: { activeStrategies?: string[] } } | undefined;
+  const lastFilterToggle = (toggleRows ?? []).find(
+    (r: { type: string }) => r.type === "toggle_s1_filter",
+  ) as { result: { requireDailyEma200?: boolean } } | undefined;
+  const lastLeverageCmd = (toggleRows ?? []).find(
+    (r: { type: string }) => r.type === "set_leverage",
+  ) as { result: { leverageMult?: number } } | undefined;
+
+  const activeStrategies =
+    lastStrategyToggle?.result?.activeStrategies ?? ["S1", "S6"];
+  const requireEma200 =
+    lastFilterToggle?.result?.requireDailyEma200 ?? true;
+  const leverageMult = lastLeverageCmd?.result?.leverageMult ?? 1.0;
+
   return (
     <>
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            Live telemetry from the BTC perpetuals bot.{" "}
-            {latestMarket ? (
-              <>
-                Last tick{" "}
-                <span className="font-medium text-foreground">
-                  {formatRelativeTime(latestMarket.taken_at)}
-                </span>
-                .
-              </>
-            ) : (
-              <span className="text-muted-foreground">
-                Waiting for first tick…
-              </span>
-            )}
-          </p>
-        </div>
-        <KillSwitchButton killed={Boolean(latestRisk?.killed)} />
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <p className="text-sm text-muted-foreground">
+          Live telemetry from the BTC perpetuals bot.
+        </p>
       </div>
+
+      <AnimateIn className="mb-6">
+        <BotStatusCard
+          risk={latestRisk}
+          lastTickAt={latestMarket?.taken_at ?? null}
+          source={latestMarket?.source ?? null}
+          initialStrategies={activeStrategies}
+          initialRequireEma200={requireEma200}
+          initialLeverageMult={leverageMult}
+        />
+      </AnimateIn>
 
       {/* Top stats row */}
       <AnimateIn className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -217,40 +233,6 @@ export default async function DashboardPage() {
         <ManualTradeCard markPrice={Number(latestMarket?.price) || 0} />
       </AnimateIn>
 
-      {/* Kill switch banner — highest priority, sits above the pause banner */}
-      {latestRisk?.killed && (
-        <Card className="mb-6 border-destructive/60 bg-destructive/10">
-          <CardHeader className="flex-row items-center gap-3 space-y-0">
-            <OctagonX className="h-5 w-5 text-destructive" />
-            <div className="flex-1">
-              <CardTitle className="text-base text-destructive">
-                Kill switch active
-              </CardTitle>
-              <CardDescription>
-                {latestRisk.kill_reason
-                  ? latestRisk.kill_reason
-                  : "All positions closed. No new entries until you click Resume."}
-              </CardDescription>
-            </div>
-          </CardHeader>
-        </Card>
-      )}
-
-      {/* Pause / risk banner */}
-      {latestRisk?.paused_until && (
-        <Card className="mb-6 border-destructive/40 bg-destructive/5">
-          <CardHeader className="flex-row items-center gap-3 space-y-0">
-            <ShieldAlert className="h-5 w-5 text-destructive" />
-            <div>
-              <CardTitle className="text-base">Bot paused</CardTitle>
-              <CardDescription>
-                Until {formatTime(latestRisk.paused_until)}
-                {latestRisk.pause_reason ? ` — ${latestRisk.pause_reason}` : ""}
-              </CardDescription>
-            </div>
-          </CardHeader>
-        </Card>
-      )}
 
       {/* Main grid */}
       <AnimateIn delay={100} className="grid gap-6 lg:grid-cols-3">
@@ -407,13 +389,6 @@ export default async function DashboardPage() {
       <p className="mt-6 text-center text-xs text-muted-foreground">
         Page is rendered server-side on each request. Refresh to see the latest
         tick.
-        {latestRisk && (
-          <>
-            {" "}
-            Daily drawdown {formatPercent(latestRisk.daily_dd_pct)} · Weekly{" "}
-            {formatPercent(latestRisk.weekly_dd_pct)}.
-          </>
-        )}
       </p>
     </>
   );

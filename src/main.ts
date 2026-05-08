@@ -580,7 +580,7 @@ async function main(): Promise<void> {
         sizeBase: pos.sizeBase,
         stopPrice: pos.stopPrice,
         marginUsd: pos.marginUsd,
-        riskDollar: pos.marginUsd, // margin = risk for manual trades
+        riskDollar: pos.marginUsd,
         leverage: pos.leverage,
         confluenceScore: 0,
         stopDistancePct: pos.stopDistancePct,
@@ -590,6 +590,10 @@ async function main(): Promise<void> {
           `SL $${pos.stopPrice.toFixed(0)}, ${pos.leverage}x`
       );
     },
+    toggleStrategy: () => [],
+    getEnabledStrategies: () => [],
+    setLeverageMult: (m) => m,
+    getLeverageMult: () => 1.0,
   });
 
   // Graceful shutdown — unsubscribe the Realtime channel on Ctrl-C / SIGTERM

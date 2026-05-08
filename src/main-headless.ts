@@ -63,7 +63,7 @@ const ENABLED_STRATEGIES = (process.env.ENABLED_STRATEGIES ?? "S1,S2,S3")
   .map(s => s.trim());
 
 // Leverage multiplier for reduced-risk deployment (0.25 = quarter leverage)
-const LEVERAGE_MULT = parseFloat(process.env.LEVERAGE_MULT ?? "0.25");
+let LEVERAGE_MULT = parseFloat(process.env.LEVERAGE_MULT ?? "0.25");
 
 const S7_FUNDING_FILTER = (process.env.S7_FUNDING_FILTER ?? "false").toLowerCase() === "true";
 const S5_ENABLED = (process.env.S5_ENABLED ?? "false").toLowerCase() === "true";
@@ -877,6 +877,21 @@ async function main(): Promise<void> {
         stopDistancePct: pos.stopDistancePct,
       });
     },
+    toggleStrategy: (strategy, enabled) => {
+      const idx = ENABLED_STRATEGIES.indexOf(strategy);
+      if (enabled && idx === -1) {
+        ENABLED_STRATEGIES.push(strategy);
+      } else if (!enabled && idx !== -1) {
+        ENABLED_STRATEGIES.splice(idx, 1);
+      }
+      return [...ENABLED_STRATEGIES];
+    },
+    getEnabledStrategies: () => [...ENABLED_STRATEGIES],
+    setLeverageMult: (mult) => {
+      LEVERAGE_MULT = mult;
+      return LEVERAGE_MULT;
+    },
+    getLeverageMult: () => LEVERAGE_MULT,
   }, BOT_SOURCE);
 
   // S5 webhook server (only if enabled + secret configured)

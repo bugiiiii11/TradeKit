@@ -15,6 +15,7 @@ import { closePosition, placeMarketOrder, setStopLoss, setTakeProfit, type Order
 import { getHyperliquidContext } from "../hyperliquid/client";
 import { clearKilled, getState, setKilled } from "../risk/state";
 import { writeRiskSnapshot } from "../db/snapshots";
+import { S1_CONFIG } from "../strategy/s1_ema_trend";
 
 const DRY_RUN = (process.env.DRY_RUN ?? "false").toLowerCase() === "true";
 
@@ -35,18 +36,12 @@ export interface ManualPositionInfo {
 }
 
 export interface CommandHandlerContext {
-  /**
-   * Clears the bot's in-memory `activePositions[]` tracking. Called after a
-   * kill switch so the next `runLoop` tick doesn't try to evaluate exits on
-   * positions that were just closed.
-   */
   clearActivePositions: () => void;
-  /**
-   * Registers a manual trade into the bot's activePositions[] so the
-   * reconciliation loop can detect when it closes via native TP/SL and
-   * log it to the trades table.
-   */
   registerManualPosition: (pos: ManualPositionInfo) => void;
+  toggleStrategy: (strategy: string, enabled: boolean) => string[];
+  getEnabledStrategies: () => string[];
+  setLeverageMult: (mult: number) => number;
+  getLeverageMult: () => number;
 }
 
 export type CommandResult =
@@ -389,14 +384,104 @@ export async function handleResume(
   _ctx: CommandHandlerContext
 ): Promise<CommandResult> {
   clearKilled();
-  // Same rationale as handleKillSwitch — push an immediate risk snapshot so
-  // the dashboard banner clears within seconds of the Resume button click.
   await writeRiskSnapshot({ state: getState() });
   console.warn("[Commands] RESUME — kill switch cleared");
   return {
     ok: true,
     result: {
       resumedAt: new Date().toISOString(),
+    },
+  };
+}
+
+const VALID_STRATEGIES = ["S1", "S2", "S3", "S5", "S6"];
+
+export async function handleToggleStrategy(
+  payload: unknown,
+  ctx: CommandHandlerContext,
+): Promise<CommandResult> {
+  if (typeof payload !== "object" || !payload) {
+    return { ok: false, error: "Invalid payload" };
+  }
+  const { strategy, enabled } = payload as { strategy?: string; enabled?: boolean };
+
+  if (!strategy || !VALID_STRATEGIES.includes(strategy)) {
+    return { ok: false, error: `Invalid strategy: ${strategy}` };
+  }
+  if (typeof enabled !== "boolean") {
+    return { ok: false, error: "enabled must be boolean" };
+  }
+
+  const activeStrategies = ctx.toggleStrategy(strategy, enabled);
+
+  console.warn(
+    `[Commands] Strategy ${strategy} ${enabled ? "ENABLED" : "DISABLED"} — active: ${activeStrategies.join(", ")}`,
+  );
+  return {
+    ok: true,
+    result: {
+      strategy,
+      enabled,
+      activeStrategies,
+      toggledAt: new Date().toISOString(),
+    },
+  };
+}
+
+export async function handleToggleS1Filter(
+  payload: unknown,
+  _ctx: CommandHandlerContext,
+): Promise<CommandResult> {
+  if (typeof payload !== "object" || !payload) {
+    return { ok: false, error: "Invalid payload" };
+  }
+  const { skipDailyEma200 } = payload as { skipDailyEma200?: boolean };
+
+  if (typeof skipDailyEma200 !== "boolean") {
+    return { ok: false, error: "skipDailyEma200 must be boolean" };
+  }
+
+  S1_CONFIG.requireDailyEma200 = !skipDailyEma200;
+
+  const state = S1_CONFIG.requireDailyEma200 ? "REQUIRED" : "SKIPPED";
+  console.warn(`[Commands] S1 Daily-EMA200 filter: ${state}`);
+
+  return {
+    ok: true,
+    result: {
+      requireDailyEma200: S1_CONFIG.requireDailyEma200,
+      skipDailyEma200,
+      toggledAt: new Date().toISOString(),
+    },
+  };
+}
+
+export async function handleSetLeverage(
+  payload: unknown,
+  ctx: CommandHandlerContext,
+): Promise<CommandResult> {
+  if (typeof payload !== "object" || !payload) {
+    return { ok: false, error: "Invalid payload" };
+  }
+  const { leverageMult } = payload as { leverageMult?: number };
+
+  if (typeof leverageMult !== "number" || leverageMult < 0.25 || leverageMult > 2.0) {
+    return { ok: false, error: "leverageMult must be 0.25–2.0" };
+  }
+
+  const newMult = ctx.setLeverageMult(leverageMult);
+
+  console.warn(
+    `[Commands] Leverage multiplier: ${newMult}x (S1=${Math.max(1, Math.round(10 * newMult))}x, S6=${Math.max(1, Math.round(8 * newMult))}x)`,
+  );
+
+  return {
+    ok: true,
+    result: {
+      leverageMult: newMult,
+      effectiveS1: Math.max(1, Math.round(10 * newMult)),
+      effectiveS6: Math.max(1, Math.round(8 * newMult)),
+      setAt: new Date().toISOString(),
     },
   };
 }

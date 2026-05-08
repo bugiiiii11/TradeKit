@@ -12,7 +12,13 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-export type CommandType = "kill_switch" | "resume" | "manual_trade";
+export type CommandType =
+  | "kill_switch"
+  | "resume"
+  | "manual_trade"
+  | "toggle_strategy"
+  | "toggle_s1_filter"
+  | "set_leverage";
 
 export type CommandActionResult =
   | { ok: true; id: string; result?: Record<string, unknown> }
@@ -138,4 +144,26 @@ export async function issueManualTrade(
   params: ManualTradeParams,
 ): Promise<CommandActionResult> {
   return issueCommand("manual_trade", params as unknown as Record<string, unknown>);
+}
+
+/** Toggle a strategy on/off at runtime (temporary — resets on restart). */
+export async function toggleStrategy(
+  strategy: string,
+  enabled: boolean,
+): Promise<CommandActionResult> {
+  return issueCommand("toggle_strategy", { strategy, enabled });
+}
+
+/** Toggle S1 Daily-EMA200 filter at runtime (temporary — resets on restart). */
+export async function toggleS1Filter(
+  skipDailyEma200: boolean,
+): Promise<CommandActionResult> {
+  return issueCommand("toggle_s1_filter", { skipDailyEma200 });
+}
+
+/** Set leverage multiplier at runtime (0.25–2.0, temporary — resets on restart). */
+export async function setLeverage(
+  leverageMult: number,
+): Promise<CommandActionResult> {
+  return issueCommand("set_leverage", { leverageMult });
 }
