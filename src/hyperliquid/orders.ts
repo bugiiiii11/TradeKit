@@ -439,3 +439,39 @@ export async function setStopLoss(
   console.log(`[Orders] Stop-loss set @ $${stopPrice} (${order.s} BTC) | oid: ${oid}`);
   return oid;
 }
+
+/**
+ * Modifies an existing stop-loss trigger order's price (used by trailing stop).
+ * Keeps all other order params (size, reduce-only, tpsl=sl) unchanged.
+ * Returns the new OID (Hyperliquid may reassign on modify).
+ */
+export async function modifyStopLoss(
+  oid: string,
+  direction: OrderDirection,
+  newStopPrice: number,
+  sizeBase: number
+): Promise<string> {
+  const ctx = await getHyperliquidContext();
+  const closeIsLong = direction === "short";
+
+  await ctx.exchange.modify({
+    oid: parseInt(oid, 10),
+    order: {
+      a: ctx.btcAssetIndex,
+      b: closeIsLong,
+      p: roundPrice(newStopPrice, ctx.btcSzDecimals),
+      s: roundSize(sizeBase, ctx.btcSzDecimals),
+      r: true,
+      t: {
+        trigger: {
+          isMarket: true,
+          triggerPx: roundPrice(newStopPrice, ctx.btcSzDecimals),
+          tpsl: "sl" as const,
+        },
+      },
+    },
+  });
+
+  console.log(`[Orders] Stop-loss modified: oid=${oid} → new trigger $${newStopPrice.toFixed(1)}`);
+  return oid;
+}

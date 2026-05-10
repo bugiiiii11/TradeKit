@@ -37,7 +37,7 @@ import {
   getState,
   hydrateState,
 } from "./risk/state";
-import { placeMarketOrder, placeLimitOrder, closePosition, cancelOrder, setStopLoss, setScaledTakeProfits } from "./hyperliquid/orders";
+import { placeMarketOrder, placeLimitOrder, closePosition, cancelOrder, setStopLoss, setScaledTakeProfits, modifyStopLoss } from "./hyperliquid/orders";
 import { getBalance, getOpenPositions, getFundingRate, getUserFills, getOpenBtcTriggerOrders } from "./hyperliquid/account";
 import type { PositionInfo } from "./hyperliquid/account";
 import { logTradeOpen, logTradeClose, readAll as readTradeLog } from "./logger/trade_logger";
@@ -53,6 +53,7 @@ import { startCommandSubscription, stopCommandSubscription } from "./db/commands
 import { printPortfolioStats } from "./logger/portfolio";
 import { Signal } from "./strategy/types";
 import { initDiscord, sendDiscord, Colors } from "./notifications/discord";
+import { evaluateTrailing } from "./risk/trailing";
 
 const STARTING_BANKROLL = parseFloat(process.env.BANKROLL ?? "500");
 const DRY_RUN = (process.env.DRY_RUN ?? "false").toLowerCase() === "true";
@@ -70,9 +71,15 @@ const S5_ENABLED = (process.env.S5_ENABLED ?? "false").toLowerCase() === "true";
 const S5_WEBHOOK_PORT = parseInt(process.env.S5_WEBHOOK_PORT ?? "3456", 10);
 const S5_WEBHOOK_SECRET = process.env.S5_WEBHOOK_SECRET ?? "";
 
+const TRAILING_MODE: TrailingMode = (process.env.TRAILING_MODE ?? "off") as TrailingMode;
+const TRAILING_DISTANCE = parseFloat(process.env.TRAILING_DISTANCE ?? "0.02");
+const BREAKEVEN_BUFFER = parseFloat(process.env.BREAKEVEN_BUFFER ?? "0.001");
+
 let lastS1EvalTime = 0;
 let lastS2EvalTime = 0;
 let lastS6EvalTime = 0;
+
+type TrailingMode = "off" | "breakeven" | "trailing";
 
 interface ActivePosition {
   strategy: "S1" | "S2" | "S3" | "S5" | "S6" | "manual";
@@ -88,6 +95,8 @@ interface ActivePosition {
   stopDistancePct: number;
   stopOid?: string;
   tpOids?: string[];
+  trailingMode: TrailingMode;
+  breakevenApplied?: boolean;
 }
 
 const activePositions: ActivePosition[] = [];
@@ -148,6 +157,11 @@ async function hydrateActivePositions(): Promise<void> {
       }
     }
 
+    // Detect if breakeven was already applied (SL at or past entry)
+    const alreadyBreakeven = pos.direction === "long"
+      ? stopPrice >= pos.entryPrice
+      : stopPrice <= pos.entryPrice;
+
     activePositions.push({
       strategy,
       direction: pos.direction,
@@ -162,6 +176,8 @@ async function hydrateActivePositions(): Promise<void> {
       stopDistancePct,
       stopOid: slOrder ? String(slOrder.oid) : undefined,
       tpOids: tpOrders.length > 0 ? tpOrders.map(o => String(o.oid)) : undefined,
+      trailingMode: TRAILING_MODE,
+      breakevenApplied: alreadyBreakeven,
     });
 
     const source = matchingTrade ? "trade-log" : "external (skip exit logic)";
@@ -211,6 +227,11 @@ async function onBarClose(snapshots: {
 
     // 3. Reconcile — detect native TP/SL closes
     await reconcilePositions(livePositions);
+
+    // 3.5. Trailing stop-loss check
+    if (!killed && TRAILING_MODE !== "off") {
+      await checkTrailingStops(snap15m.close);
+    }
 
     // 4. Check exits (skip if killed)
     if (!killed) {
@@ -404,6 +425,7 @@ async function onBarClose(snapshots: {
             stopDistancePct: primarySignal.stopDistancePct,
             stopOid,
             tpOids: tpOids.length > 0 ? tpOids : undefined,
+            trailingMode: TRAILING_MODE,
           });
           recordTradeOpen(sizing.marginUsd);
 
@@ -489,6 +511,7 @@ async function onBarClose(snapshots: {
           confluenceScore: 0,
           stopDistancePct: S6_STOP_DISTANCE,
           stopOid,
+          trailingMode: TRAILING_MODE,
         });
         recordTradeOpen(sizing.marginUsd);
         resetS6ExitState();
@@ -577,6 +600,7 @@ async function onBarClose(snapshots: {
             confluenceScore: 0,
             stopDistancePct: S5_STOP_DISTANCE,
             stopOid,
+            trailingMode: TRAILING_MODE,
           });
           recordTradeOpen(sizing.marginUsd);
 
@@ -605,6 +629,52 @@ async function onBarClose(snapshots: {
   } catch (err) {
     console.error("[Bot-VPS] Bar evaluation error:", err);
     sendDiscord("errors", `Bar evaluation error\n${err instanceof Error ? err.message : String(err)}`, Colors.red);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Trailing stop-loss check
+// ---------------------------------------------------------------------------
+
+async function checkTrailingStops(markPrice: number): Promise<void> {
+  for (const pos of activePositions) {
+    if (pos.strategy === "manual") continue;
+    if (pos.trailingMode === "off") continue;
+    if (!pos.stopOid) continue;
+
+    const result = evaluateTrailing({
+      direction: pos.direction,
+      entryPrice: pos.entryPrice,
+      currentStopPrice: pos.stopPrice,
+      markPrice,
+      trailingMode: pos.trailingMode,
+      breakevenApplied: pos.breakevenApplied ?? false,
+      activationDistance: TRAILING_DISTANCE,
+      breakevenBuffer: BREAKEVEN_BUFFER,
+    });
+
+    if (!result.shouldMove || result.newStopPrice === null) continue;
+
+    try {
+      await modifyStopLoss(pos.stopOid, pos.direction, result.newStopPrice, pos.sizeBase);
+      const oldStop = pos.stopPrice;
+      pos.stopPrice = result.newStopPrice;
+      pos.breakevenApplied = true;
+
+      console.log(
+        `[Trailing] ${pos.strategy} ${pos.direction}: SL moved $${oldStop.toFixed(1)} → $${result.newStopPrice.toFixed(1)} (${result.reason})`
+      );
+      sendDiscord("signals",
+        `Trailing SL moved (${result.reason})\n${pos.strategy} ${pos.direction}\nSL: $${oldStop.toFixed(0)} → $${result.newStopPrice.toFixed(0)}\nEntry: $${pos.entryPrice.toFixed(0)} | Mark: $${markPrice.toFixed(0)}`,
+        Colors.blue,
+      );
+    } catch (err) {
+      console.error(`[Trailing] Failed to modify SL for ${pos.strategy}:`, err);
+      sendDiscord("errors",
+        `Trailing SL modify FAILED\n${pos.strategy} ${pos.direction}\n${err instanceof Error ? err.message : String(err)}`,
+        Colors.red,
+      );
+    }
   }
 }
 
@@ -835,6 +905,7 @@ async function main(): Promise<void> {
   console.log(`[Bot-VPS] Bankroll: $${STARTING_BANKROLL}`);
   console.log(`[Bot-VPS] S7 funding filter: ${S7_FUNDING_FILTER ? "ON" : "OFF"}`);
   console.log(`[Bot-VPS] S5 cascade: ${S5_ENABLED ? `ON (port ${S5_WEBHOOK_PORT})` : "OFF"}`);
+  console.log(`[Bot-VPS] Trailing SL: ${TRAILING_MODE} (distance=${(TRAILING_DISTANCE * 100).toFixed(1)}%, buffer=${(BREAKEVEN_BUFFER * 100).toFixed(1)}%)`);
   console.log(`[Bot-VPS] Source tag: ${BOT_SOURCE}`);
 
   // Hydrate risk state
@@ -875,6 +946,7 @@ async function main(): Promise<void> {
         leverage: pos.leverage,
         confluenceScore: 0,
         stopDistancePct: pos.stopDistancePct,
+        trailingMode: "off",
       });
     },
     toggleStrategy: (strategy, enabled) => {
