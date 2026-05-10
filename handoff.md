@@ -12,27 +12,6 @@
 
 ---
 
-## What Was Done (Session 32) — Hydration fix + leverage scale-up
-
-### Balance Investigation ($9 Drop)
-Wrote `src/scripts/investigate_balance.ts` — queries Hyperliquid's `userFillsByTime`, `userFunding`, and `userNonFundingLedgerUpdates` APIs directly (read-only, no private key needed). Found 63 fills in 14 days on VPS wallet: -$6.47 closed PnL + -$2.10 fees + -$0.05 funding = -$8.62. Root cause: Martin placed manual trades via Hyperliquid web UI (0.01 BTC, ~$1000 notional) — bot hydrated them as S1/S2 based on leverage, applied exit logic, closed them at a loss.
-
-### Hydration Fix (P1)
-Replaced leverage-heuristic strategy guessing in `hydrateActivePositions()` with trade-log cross-check. On restart, bot reads `trades/trade_log.json` for open records (exit_price === null). Positions matching a log entry get the logged strategy; positions with no match are tagged `"manual"` and skipped by exit logic. This prevents the bot from interfering with web UI trades.
-
-Files: `src/main-headless.ts` (hydration rewrite, lines 121-173). Committed: `cb3da8e`.
-
-### Leverage Scale-Up (P2)
-Changed `LEVERAGE_MULT` from 0.5 to 1.0 in VPS `.env`. Effective leverage now: S1=10x, S2=8x, S6=8x. Notional sizing doubled (~$40 positions). Rationale: 30 trades at 0.5x validated stability; fee drag (0.09% RT) was eating profits on ~$20 positions. Deployed in same restart as hydration fix.
-
-### Backtest Data Refresh
-Ran `download_binance.ts --months=26`. Klines now cover March 2024 → May 7, 2026 (76,548 rows, 26 months). April 2026 partial replaced with full month, May 2026 partial added. Funding rates were already current from Session 31.
-
-### Settings Cleanup
-Moved machine-specific SSH permission from `.claude/settings.json` to `settings.local.json`. Committed: `705a91c`.
-
----
-
 ## What Was Done (Session 33) — 26-month backtest validation, S2 disabled
 
 ### 26-Month Backtest
@@ -90,23 +69,42 @@ VPS balance $320.67 (down ~$50 from S33). Zero bot trades — all losses are Mar
 
 ---
 
+## What Was Done (Session 35) — Health check + dashboard validation
+
+### VPS Health Check
+Bot online 42h, zero unstable restarts, zero errors. Balance $320.67 (unchanged). 82 bar closes processed, all "No signals." S1 blocked by `Daily-EMA200=below`. S6 BBWP in extreme compression (0.4) — waiting for breakout above 50. Command bus recovered from one `CHANNEL_ERROR` (auto-reconnect after 1 retry).
+
+### S5 Cascade Webhook
+10 cascade signals received (all `severity=medium`, $25-27M impact, Ethereum). All correctly ignored — S5 requires `high` severity. Pipe confirmed working.
+
+### Dashboard Controls Validated
+Martin tested on production (`trade-kit.vercel.app`): S1/S6 toggles work, leverage slider works. Full command bus round-trip confirmed. Quote: "leverage je mega funkcia" (leverage is a great feature).
+
+### Martin Feature Requests
+1. **Trailing stop-loss** — auto-move SL into profit on winning trades
+2. **Meta Signals integration** — external signal provider (Krown recommends, claims high win rate)
+
+Both captured in What To Do Next. No code changes this session.
+
+---
+
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $320.67, zero bot trades so far. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
-| 2026-05-08 | Dashboard control panel LIVE | New toggles/slider deployed. Verify first command round-trip works on production dashboard. | Visit `trade-kit.vercel.app`, test a toggle, check bot logs for `[Commands]` output |
-| 2026-05-06 | S5 cascade pipe LIVE | Full pipe working. Hourly heartbeats confirmed. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
+| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $320.67, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP in extreme compression (0.4). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
+| 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
 | 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades so far. Validate sizing, fee impact at full leverage. Balance $320.67. |
-| 2 | **Test dashboard controls on production** | low | Visit Vercel, test a strategy toggle round-trip, verify bot receives and acknowledges. |
-| 3 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
-| 4 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |
-| 5 | **S3 re-evaluation** | low | Mean-reversion on BTC perps structurally unfavorable. Revisit if Martin fine-tunes StochRSI. |
-| 6 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding available. |
+| 2 | **Trailing stop-loss** | med | Martin request (S35). Auto-move SL into profit on winning trades. Design: breakeven-move vs true trailing. Research Hyperliquid native trailing support first. |
+| 3 | **Meta Signals integration** | med | Martin request (S35). External signal provider (Krown recommends). Research their API/webhook format before committing. |
+| 4 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
+| 5 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |
+| 6 | **S3 re-evaluation** | low | Mean-reversion on BTC perps structurally unfavorable. Revisit if Martin fine-tunes StochRSI. |
+| 7 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding available. |

@@ -1,6 +1,6 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-31). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-32). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
 
 ## What Was Done (Session 31) — S7 backtest validation + S5 webhook receiver
@@ -959,4 +959,25 @@ Found two critical bugs when bot started trading:
 2. **Stop cleanup nuke:** `closePosition` canceled ALL reduce-only BTC orders, including stops belonging to other strategies' open positions.
 
 **Fixes:** Block new entries when any position already open, track SL/TP order IDs per position, cancel only that position's specific OIDs on exit. Files: `src/main-headless.ts`, `src/hyperliquid/orders.ts`. Committed: `85255e2`. Deployed to VPS.
+
+---
+
+## Session 32 — Hydration fix + leverage scale-up
+
+### Balance Investigation ($9 Drop)
+Wrote `src/scripts/investigate_balance.ts` — queries Hyperliquid's `userFillsByTime`, `userFunding`, and `userNonFundingLedgerUpdates` APIs directly (read-only, no private key needed). Found 63 fills in 14 days on VPS wallet: -$6.47 closed PnL + -$2.10 fees + -$0.05 funding = -$8.62. Root cause: Martin placed manual trades via Hyperliquid web UI (0.01 BTC, ~$1000 notional) — bot hydrated them as S1/S2 based on leverage, applied exit logic, closed them at a loss.
+
+### Hydration Fix (P1)
+Replaced leverage-heuristic strategy guessing in `hydrateActivePositions()` with trade-log cross-check. On restart, bot reads `trades/trade_log.json` for open records (exit_price === null). Positions matching a log entry get the logged strategy; positions with no match are tagged `"manual"` and skipped by exit logic. This prevents the bot from interfering with web UI trades.
+
+Files: `src/main-headless.ts` (hydration rewrite, lines 121-173). Committed: `cb3da8e`.
+
+### Leverage Scale-Up (P2)
+Changed `LEVERAGE_MULT` from 0.5 to 1.0 in VPS `.env`. Effective leverage now: S1=10x, S2=8x, S6=8x. Notional sizing doubled (~$40 positions). Rationale: 30 trades at 0.5x validated stability; fee drag (0.09% RT) was eating profits on ~$20 positions. Deployed in same restart as hydration fix.
+
+### Backtest Data Refresh
+Ran `download_binance.ts --months=26`. Klines now cover March 2024 → May 7, 2026 (76,548 rows, 26 months). April 2026 partial replaced with full month, May 2026 partial added. Funding rates were already current from Session 31.
+
+### Settings Cleanup
+Moved machine-specific SSH permission from `.claude/settings.json` to `settings.local.json`. Committed: `705a91c`.
 
