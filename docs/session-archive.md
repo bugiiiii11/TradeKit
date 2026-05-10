@@ -1,7 +1,13 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-32). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-33). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+## What Was Done (Session 33) — 26-month backtest validation, S2 disabled
+
+Ran S1+S2+S6 on full 26-month Binance data (March 2024 → May 2026, 76k rows, 429-day window after warmup): +$133.66 (+26.7%), 156 trades, PF 1.59, Sharpe 2.53. Per-strategy: S1 +$87 (9 trades, 78% WR), S6 +$76 (105 trades, 46% WR), **S2 -$30 (42 trades, 31% WR — net drag)**. S1+S6-only: +$165.74 (+33.1%), PF 1.92, Sharpe 3.45 — every metric improved. S2 disabled on VPS (`ENABLED_STRATEGIES=S1,S6`). No code changes. Balance $370.63.
+
+---
 
 ## What Was Done (Session 31) — S7 backtest validation + S5 webhook receiver
 

@@ -47,7 +47,7 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 
 **Webhook:** `src/webhook/server.ts` (Node http, POST /webhook/cascade, Bearer auth for S5 signals)
 
-**Risk:** `manager.ts` (drawdown limits, pause, position cap=3), `sizing.ts` (calcMarginBasedSize: 5% margin), `state.ts` (bankroll/PnL tracking, Supabase hydration on restart)
+**Risk:** `manager.ts` (drawdown limits, pause, position cap=3), `sizing.ts` (calcMarginBasedSize: 5% margin), `state.ts` (bankroll/PnL tracking, Supabase hydration on restart), `trailing.ts` (breakeven SL logic — pure function, no exchange calls)
 
 **Database:** `src/db/` — `supabase.ts` (singleton), `snapshots.ts` (market+risk writes + hydration read), `positions.ts` (sync by coin_direction key), `trades.ts` (closed trades, source: bot|manual), `logs.ts` (console→ring buffer→Supabase batch), `commands.ts` (Realtime subscription + claim-then-execute)
 
@@ -103,6 +103,9 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
 - **S5_ENABLED**, **S5_WEBHOOK_PORT** (default 3456), **S5_WEBHOOK_SECRET** env vars: cascade webhook receiver. Disabled by default.
 - **S7_FUNDING_FILTER** env var: parked (backtest -$3 PnL). Do not enable without new validation.
+- **TRAILING_MODE** env var: `off|breakeven|trailing` (default: `off`). Breakeven moves SL to entry+buffer once price moves ≥ TRAILING_DISTANCE in our favor. Trailing mode not yet implemented.
+- **TRAILING_DISTANCE** env var: activation threshold as fraction (default: `0.02` = 2%).
+- **BREAKEVEN_BUFFER** env var: buffer above/below entry to avoid spread stops (default: `0.001` = 0.1%).
 - **Manual trades** register as `strategy: "manual"` — bot exit logic skips them, only native SL/TP closes. Hydration uses trade-log cross-check (not leverage heuristic) to distinguish bot vs web UI positions (Session 32 fix).
 
 ## Untested Code Paths
@@ -111,9 +114,10 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - Kill switch close-all with real open LIVE positions
 - Native TP trigger execution + partial fill cascade on Hyperliquid
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
+- Trailing SL `modifyStopLoss()` with real open position (deployed S37 with mode=off, not yet exercised)
 
 **Operational:**
-- Hydration trade-log cross-check with real open position (deployed Session 32, not yet exercised)
+- Hydration trade-log cross-check with real open position (deployed S32, validated S34+S37 — working correctly)
 - Command handler failure path (`status='failed'` write-back)
 - MCP reconnect under real TradingView crash (only synthetic retry tested)
 - Log sink `beforeExit` flush + buffer overflow drop-oldest

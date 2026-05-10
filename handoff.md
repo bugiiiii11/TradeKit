@@ -12,24 +12,6 @@
 
 ---
 
-## What Was Done (Session 33) — 26-month backtest validation, S2 disabled
-
-### 26-Month Backtest
-Ran S1+S2+S6 on full 26-month Binance data (March 2024 → May 2026, 76k rows, 429-day window after warmup). Results weaker than the 12-month window: **+$133.66 (+26.7%), 156 trades, PF 1.59, Sharpe 2.53**. Extra months added unfavorable regimes.
-
-Per-strategy: S1 +$87 (9 trades, 78% WR — sniper), S6 +$76 (105 trades, 46% WR — workhorse), **S2 -$30 (42 trades, 31% WR — net drag)**.
-
-### S2 Removal Confirmed
-Ran S1+S6-only backtest: **+$165.74 (+33.1%), 124 trades, PF 1.92, Sharpe 3.45**. Every metric improved. S6 picked up 10 extra trades from freed position slots. S1 gained slightly (+$87→$89).
-
-### S2 Disabled on VPS
-Changed `ENABLED_STRATEGIES=S1,S6` in VPS `.env`, restarted pm2. Startup confirms: `Strategies: S1, S6`. S2 code untouched — can be re-enabled for future experiments. No code changes this session.
-
-### Balance Note
-VPS balance $370.63 (down from $390 in S32). Zero bot trades — drop is from Martin's manual web UI trades. Hydration fix (S32) prevents bot interference with manual trades.
-
----
-
 ## What Was Done (Session 34) — Dashboard control panel + decision gate fix
 
 ### Dashboard Control Panel (all three priorities shipped)
@@ -137,23 +119,50 @@ No code changes this session. Design only.
 
 ---
 
+## What Was Done (Session 37) — Trailing stop-loss implementation (breakeven mode)
+
+### Trailing Stop-Loss (breakeven mode) — deployed, inactive
+
+Implemented bot-managed trailing SL using Hyperliquid SDK `modify()`. Four changes:
+
+1. **`src/hyperliquid/orders.ts`** — added `modifyStopLoss()` function (modifies trigger order `triggerPx` by OID)
+2. **`src/main-headless.ts`** — added `TrailingMode` type, env var parsing (`TRAILING_MODE`, `TRAILING_DISTANCE`, `BREAKEVEN_BUFFER`), `trailingMode`+`breakevenApplied` fields on `ActivePosition`, `checkTrailingStops()` in main loop (step 3.5, after reconciliation)
+3. **`src/risk/trailing.ts`** (new) — pure function `evaluateTrailing()`: checks activation threshold, returns new SL at entry ± buffer, ratchet-only
+4. **`src/scripts/test_trailing.ts`** (new) — 21 unit tests (both directions, edge cases). All pass.
+
+**Design decisions:**
+- Breakeven activates when mark price moves ≥ `TRAILING_DISTANCE` (2%) in our favor
+- SL moves to entry + `BREAKEVEN_BUFFER` (0.1%) to avoid spread/slippage stops
+- One-time move, then static (no continuous trailing — that's S38)
+- If `modify()` fails, logs error but keeps existing SL (stale > none)
+- Manual positions excluded from trailing logic
+
+Committed: `17331cf`. Deployed to VPS with `TRAILING_MODE=off` (zero-risk). Will activate `breakeven` after first real bot trade validates baseline SL flow.
+
+### VPS Health Check
+Bot healthy, ticking every 15m. Balance $320.67 (unchanged). S6 BBWP=62.3 (crossed 50 but EMA21=below/short direction). S1 still blocked by Daily-EMA200=below. Martin's manual position hydrated correctly on restart.
+
+---
+
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $320.67, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP climbing (30.2, up from 0.4 — approaching 50 threshold). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
+| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $320.67, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP crossed 50 but EMA21=below (short direction). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
 | 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
+| 2026-05-11 | Trailing SL deployed (off) | Code on VPS but `TRAILING_MODE=off`. Activate `breakeven` after first real bot trade confirms baseline SL. | Add `TRAILING_MODE=breakeven` to VPS `.env` + `pm2 restart trading-bot` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades so far. Validate sizing, fee impact at full leverage. Balance $320.67. |
-| 2 | **Trailing stop-loss — implement** | med | Design done (S36). Start with `breakeven` mode. No native Hyperliquid support — bot-managed via `modify()`. See S36 design note. |
-| 3 | **Meta Signals integration** | med | Martin request (S35). External signal provider (Krown recommends). Research their API/webhook format before committing. |
-| 4 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
-| 5 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |
-| 6 | **S3 re-evaluation** | low | Mean-reversion on BTC perps structurally unfavorable. Revisit if Martin fine-tunes StochRSI. |
-| 7 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding available. |
+| 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades so far. Validate sizing, fee impact, SL placement. Balance $320.67. |
+| 2 | **Activate trailing breakeven** | low | Code deployed (S37). After first trade confirms baseline SL → flip `TRAILING_MODE=breakeven` on VPS. |
+| 3 | **Trailing stop-loss — trailing mode** | med | Continuous trail (S38). SL follows price at fixed distance. Needs `evaluateTrailing()` trailing branch. |
+| 4 | **Meta Signals integration** | med | Martin request (S35). External signal provider (Krown recommends). Research their API/webhook format before committing. |
+| 5 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
+| 6 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |
+| 7 | **S3 re-evaluation** | low | Mean-reversion on BTC perps structurally unfavorable. Revisit if Martin fine-tunes StochRSI. |
+| 8 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding available. |
