@@ -88,13 +88,62 @@ Both captured in What To Do Next. No code changes this session.
 
 ---
 
+## What Was Done (Session 36) — Trailing stop-loss design research
+
+### VPS Health Check
+Bot healthy, ticking every 15m. Balance $320.67 (unchanged). Zero bot trades. S6 BBWP climbed from 0.4 → 30.2 (approaching 50 breakout threshold, EMA21=above/long). S5 still receiving medium cascade signals (correctly ignored). No errors.
+
+### Trailing Stop-Loss Design
+
+**Research finding:** Hyperliquid does NOT support native trailing stops. SDK order types are limited to fixed-price trigger orders (stop-market, stop-limit, TP-market, TP-limit). No trailing distance parameter exists.
+
+**Approach: bot-managed trailing via `modify()`.** The SDK's `modify()` method can update an existing trigger order's `triggerPx` by OID. The bot already polls positions every 15m bar close.
+
+**Implementation plan:**
+
+1. **Track SL order OID** — `setStopLoss()` already returns the order response. Store the OID in `activePositions` alongside entry price and current SL price.
+
+2. **Trailing modes** (configurable per strategy via env var):
+   - `breakeven` — once price moves ≥ X% in our favor, move SL to entry price. One-time move, then static. Simplest, lowest risk.
+   - `trailing` — SL follows price at a fixed distance (e.g., 2%). Moves only in favorable direction (ratchet). Checked every 15m bar close.
+   - `off` — current behavior (fixed SL, never moved).
+
+3. **Trailing logic** (in main loop, after position check):
+   - If position open + trailing enabled → get current mark price
+   - Calculate new SL: `markPrice × (1 - trailPct)` for longs, `× (1 + trailPct)` for shorts
+   - If new SL is more favorable than current SL → `exchange.modify(oid, newTriggerPx)`
+   - Never move SL against the position (ratchet only)
+   - Log every SL move to Discord signals channel
+
+4. **Config** (env vars):
+   - `TRAILING_MODE=off|breakeven|trailing` (default: `off`)
+   - `TRAILING_DISTANCE=0.02` (2%, used for both breakeven threshold and trail distance)
+   - Per-strategy override possible later, but start with global
+
+5. **Edge cases:**
+   - 15m granularity means SL lags price by up to 15 minutes — acceptable for 4H+ strategies (S1/S6), risky for S3-style 15m plays
+   - If `modify()` fails, log error but don't cancel existing SL — stale SL is better than no SL
+   - On position close, existing cleanup (`cancelOpenBtcStops`) handles orphaned orders
+
+**Decision: start with `breakeven` mode.** It's the safest first step — locks in risk-free trades without the complexity of continuous trailing. Add `trailing` mode in a follow-up session.
+
+**Code changes needed (S37):**
+- `src/hyperliquid/orders.ts` — return OID from `setStopLoss()`
+- `activePositions` type — add `slOid`, `slPrice`, `trailingMode` fields
+- Main loop — add trailing check after position reconciliation
+- New file: `src/risk/trailing.ts` — trailing logic (calculate new SL, decide whether to move)
+
+No code changes this session. Design only.
+
+---
+
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $320.67, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP in extreme compression (0.4). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
+| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $320.67, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP climbing (30.2, up from 0.4 — approaching 50 threshold). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
 | 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
 
 ## What To Do Next
@@ -102,7 +151,7 @@ Both captured in What To Do Next. No code changes this session.
 | # | Task | Risk | Notes |
 |---|------|------|-------|
 | 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades so far. Validate sizing, fee impact at full leverage. Balance $320.67. |
-| 2 | **Trailing stop-loss** | med | Martin request (S35). Auto-move SL into profit on winning trades. Design: breakeven-move vs true trailing. Research Hyperliquid native trailing support first. |
+| 2 | **Trailing stop-loss — implement** | med | Design done (S36). Start with `breakeven` mode. No native Hyperliquid support — bot-managed via `modify()`. See S36 design note. |
 | 3 | **Meta Signals integration** | med | Martin request (S35). External signal provider (Krown recommends). Research their API/webhook format before committing. |
 | 4 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
 | 5 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |
