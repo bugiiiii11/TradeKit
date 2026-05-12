@@ -659,7 +659,7 @@ async function checkTrailingStops(markPrice: number): Promise<void> {
       await modifyStopLoss(pos.stopOid, pos.direction, result.newStopPrice, pos.sizeBase);
       const oldStop = pos.stopPrice;
       pos.stopPrice = result.newStopPrice;
-      pos.breakevenApplied = true;
+      if (pos.trailingMode === "breakeven") pos.breakevenApplied = true;
 
       console.log(
         `[Trailing] ${pos.strategy} ${pos.direction}: SL moved $${oldStop.toFixed(1)} → $${result.newStopPrice.toFixed(1)} (${result.reason})`

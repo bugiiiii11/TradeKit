@@ -1,5 +1,5 @@
 /**
- * Trailing stop-loss logic (breakeven mode).
+ * Trailing stop-loss logic (breakeven + trailing modes).
  *
  * Pure function — no exchange calls. Returns the new SL price if a move
  * is warranted, or null if no action needed.
@@ -61,6 +61,21 @@ export function evaluateTrailing(input: TrailingInput): TrailingResult {
     return { shouldMove: true, newStopPrice: newStop, reason: "breakeven_activated" };
   }
 
-  // "trailing" mode — not implemented yet (S38)
-  return { shouldMove: false, newStopPrice: null, reason: "trailing_mode_not_implemented" };
+  if (trailingMode === "trailing") {
+    const newStop = direction === "long"
+      ? markPrice * (1 - activationDistance)
+      : markPrice * (1 + activationDistance);
+
+    const isMoreFavorable = direction === "long"
+      ? newStop > currentStopPrice
+      : newStop < currentStopPrice;
+
+    if (!isMoreFavorable) {
+      return { shouldMove: false, newStopPrice: null, reason: "trailing_no_improvement" };
+    }
+
+    return { shouldMove: true, newStopPrice: newStop, reason: "trailing_updated" };
+  }
+
+  return { shouldMove: false, newStopPrice: null, reason: "unknown_mode" };
 }
