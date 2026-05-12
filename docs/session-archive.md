@@ -3,6 +3,23 @@
 > Historical session notes (Sessions 1-16, 23-27, 29-34). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
 
+## Session 36 — Trailing Stop-Loss Design (archived from handoff.md)
+
+**Research finding:** Hyperliquid does NOT support native trailing stops. SDK order types are limited to fixed-price trigger orders. No trailing distance parameter.
+
+**Approach: bot-managed trailing via `modify()`.** The SDK's `modify()` method can update an existing trigger order's `triggerPx` by OID. Bot polls positions every 15m bar close.
+
+**Implementation plan:**
+1. Track SL order OID — store in `activePositions` alongside entry price and current SL price.
+2. Trailing modes: `off` (default), `breakeven` (one-shot move to entry+buffer), `trailing` (continuous ratchet at fixed distance).
+3. Trailing logic: on bar close, compute new SL from mark price, only move if more favorable (ratchet).
+4. Config: `TRAILING_MODE`, `TRAILING_DISTANCE=0.02`, `BREAKEVEN_BUFFER=0.001`.
+5. Edge cases: 15m lag acceptable for 4H+ strategies; `modify()` failure keeps existing SL (stale > none); cleanup via `cancelOpenBtcStops`.
+
+**Implemented:** S37 (breakeven), S38 (trailing). Both deployed with `TRAILING_MODE=off`.
+
+---
+
 ## What Was Done (Session 34) — Dashboard control panel + decision gate fix
 
 ### Dashboard Control Panel (all three priorities shipped)
