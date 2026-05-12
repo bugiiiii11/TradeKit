@@ -1,7 +1,27 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-33). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-34). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+## What Was Done (Session 34) — Dashboard control panel + decision gate fix
+
+### Dashboard Control Panel (all three priorities shipped)
+
+**P1: Bot Status Card** — `frontend/src/components/bot-status-card.tsx`. Health indicator (Online/Stale/Offline/Killed/Paused), last tick, source badge, drawdown, kill switch integrated.
+
+**P2: Strategy Toggles + S1 Filter** — runtime overrides via command bus. `handleToggleStrategy` + `handleToggleS1Filter` in handlers.ts. Frontend: `strategy-controls.tsx`. State restored from last completed command. All overrides reset on restart.
+
+**P3: Leverage Slider** — same command bus pattern, 0.25x–2.0x presets with per-strategy effective display.
+
+### Decision Gate Bug Fix
+`backtest_binance.ts` decision gate evaluates all strategies (S1/S2/S3/S6) instead of only S1/S2/S3. Dynamic count. S6 correctly shows "POSITIVE EXPECTANCY".
+
+### Hydration Fix Validated
+Bot correctly hydrated manual long position as "external (skip exit logic)" — trade-log cross-check from S32 working as designed.
+
+Committed: `2983d3d`, `9af3911`. VPS balance $320.67 (down ~$50 from S33, all Martin's manual trades).
+
+---
 
 ## What Was Done (Session 33) — 26-month backtest validation, S2 disabled
 

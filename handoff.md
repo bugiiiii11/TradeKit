@@ -12,45 +12,6 @@
 
 ---
 
-## What Was Done (Session 34) — Dashboard control panel + decision gate fix
-
-### Dashboard Control Panel (all three priorities shipped)
-
-**P1: Bot Status Card** — new `frontend/src/components/bot-status-card.tsx`. Consolidated operational health card with:
-- Health indicator (Online/Stale/Offline/Killed/Paused) with colored left border + pulsing dot
-- Last tick timestamp + staleness coloring (>20min = stale, >1hr = offline)
-- Source badge (vps-bot/tv-bot), drawdown (daily/weekly), consecutive losses
-- Kill/pause detail integrated (standalone banners removed)
-- Kill switch button moved from header into this card
-
-**P2: Strategy Toggles + S1 Filter** — runtime overrides via command bus:
-- Bot: `handleToggleStrategy` + `handleToggleS1Filter` in `src/commands/handlers.ts`
-- Extended `CommandHandlerContext` with `toggleStrategy`/`getEnabledStrategies` callbacks
-- Frontend: `frontend/src/components/strategy-controls.tsx` — S1/S6 toggle buttons + S1 Daily-EMA200 filter toggle
-- State restored from last completed command result in `bot_commands` table
-- All overrides are temporary — reset on bot restart (per design)
-
-**P3: Leverage Slider** — same command bus pattern:
-- Bot: `handleSetLeverage` (0.25x–2.0x), `LEVERAGE_MULT` changed from `const` to `let`
-- Frontend: preset step buttons with effective per-strategy leverage display
-
-**Desktop bot** (`src/main.ts`): no-op implementations for new context methods (strategies/leverage managed by VPS bot only).
-
-Committed: `2983d3d`. Deployed: Vercel auto-deploy (frontend), VPS `git pull` + `pm2 restart` (bot).
-
-### Decision Gate Bug Fix
-`src/scripts/backtest_binance.ts` decision gate now evaluates all strategies (S1/S2/S3/S6) instead of only S1/S2/S3. Skips strategies with zero trades. Dynamic count (`viable/evaluated` instead of hardcoded `viable/3`). Confirmed working: S6 correctly shows "POSITIVE EXPECTANCY" (115 trades, +$76.09).
-
-Committed: `9af3911`. VPS `git pull` (no restart needed — backtest script only).
-
-### Hydration Fix Validated
-On restart, bot correctly hydrated Martin's manual long position as `"external (skip exit logic)"` — the trade-log cross-check from S32 is working as designed. This retires the hydration fix watchlist item.
-
-### Balance Note
-VPS balance $320.67 (down ~$50 from S33). Zero bot trades — all losses are Martin's manual web UI trades. Not a code issue.
-
----
-
 ## What Was Done (Session 35) — Health check + dashboard validation
 
 ### VPS Health Check
@@ -144,6 +105,57 @@ Bot healthy, ticking every 15m. Balance $320.67 (unchanged). S6 BBWP=62.3 (cross
 
 ---
 
+## What Was Done (Session 38) — Trailing stop-loss: continuous trailing mode
+
+### VPS Health Check
+Bot healthy, ticking every 15m. Balance $320.67 (unchanged). Zero bot trades. S1 still blocked (Daily-EMA200=below). S6 BBWP=55.2 (above 50 but compress=20bars FAIL, EMA21=below/short). S5 receiving medium cascade signals (correctly ignored). Command bus auto-recovered from CHANNEL_ERROR.
+
+### Trailing Mode (continuous) — deployed, inactive
+
+Filled in the `trailing` branch of `evaluateTrailing()`. Three changes:
+
+1. **`src/risk/trailing.ts`** — trailing mode: `newStop = markPrice × (1 ± TRAILING_DISTANCE)`, ratchet-only (never moves SL against position)
+2. **`src/main-headless.ts`** — fixed `breakevenApplied` flag: only set for breakeven mode (one-shot), never for trailing (continuous)
+3. **`src/scripts/test_trailing.ts`** — 16 new trailing test cases (long/short trails, ratchet holds, breakevenApplied ignored). All 37 tests pass (21 breakeven + 16 trailing).
+
+Committed: `13a4866`. Deployed to VPS with `TRAILING_MODE=off` (zero-risk, same pattern as S37).
+
+**Note:** VPS bot working directory is `/home/ubuntu/trading-bot` (not `TradeKit`).
+
+### Meta Signals Research (P3 prep)
+
+**What is it:** Algorithmic crypto signal service by Eric "Krown" Crown and "K-DUB" Crypto Zombie. Proprietary algorithms scan 65 pairs across 10 timeframes (30m to 24H) 24/7. Not a copy-trading platform — delivers trade ideas with SL/TP, trader executes manually.
+
+**Signal format (confirmed fields):**
+- Suggested entry price
+- Suggested stop-loss (SL close above/below value)
+- Suggested take-profit (with R:R ratio per target, e.g. 1:2)
+- Timeframe (alerts organized by TF in Discord channels)
+- Pair (65 pairs, BTC/ETH/SOL/majors against USDT)
+- **Unknown:** direction (long/short) not explicitly documented on public pages, but implied by SL above (short) / SL below (long)
+
+**Delivery:** Discord-only. Alerts auto-posted to channels in a private Discord server, organized by timeframe. **No API, no webhook, no programmatic access.**
+
+**Signal frequency:**
+- Pro (Mafioso/Mogul): 300+ alerts/month (algo-triggered, no human filter)
+- Lite: 15-20 alerts/month (hand-curated by team, higher conviction)
+
+**Cost:**
+- **Mogul tier:** $179/month (billed quarterly) or $1,750/year
+- **Mafioso NFT:** lifetime access, purchased with ETH (price not publicly listed, may be sold out)
+- **Lite:** separate product, lower cost (exact price not found)
+
+**Integration assessment:**
+- **No direct integration path.** Discord-only, no API/webhook. To automate, we'd need a Discord bridge bot that:
+  1. Joins the Meta Signals Discord server
+  2. Parses alert messages from specific channels (fragile — format changes break the parser)
+  3. Forwards parsed signals as HTTP POST to our webhook receiver (like S5 cascade)
+- **Risk:** Discord ToS may prohibit automated message scraping. Meta Signals could change alert format without notice. Bridge bot adds a failure point.
+- **Alternative:** Martin trades Meta Signals alerts manually via the dashboard manual trade card (already built, S28). No bot integration needed.
+- **Recommendation:** Manual execution via existing dashboard is the pragmatic path. Bot integration only worthwhile if Meta Signals ever adds a webhook/API (ask their team via contact form at metasignals.io/contact).
+
+---
+
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
@@ -152,17 +164,16 @@ Bot healthy, ticking every 15m. Balance $320.67 (unchanged). S6 BBWP=62.3 (cross
 |-------|------|-----|---------------------|
 | 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $320.67, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP crossed 50 but EMA21=below (short direction). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
 | 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
-| 2026-05-11 | Trailing SL deployed (off) | Code on VPS but `TRAILING_MODE=off`. Activate `breakeven` after first real bot trade confirms baseline SL. | Add `TRAILING_MODE=breakeven` to VPS `.env` + `pm2 restart trading-bot` |
+| 2026-05-11 | Trailing SL deployed (off) | Both breakeven + trailing modes on VPS, `TRAILING_MODE=off`. Activate after first real bot trade confirms baseline SL. | Add `TRAILING_MODE=breakeven` (or `trailing`) to VPS `.env` + `pm2 restart trading-bot` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
 | 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades so far. Validate sizing, fee impact, SL placement. Balance $320.67. |
-| 2 | **Activate trailing breakeven** | low | Code deployed (S37). After first trade confirms baseline SL → flip `TRAILING_MODE=breakeven` on VPS. |
-| 3 | **Trailing stop-loss — trailing mode** | med | Continuous trail (S38). SL follows price at fixed distance. Needs `evaluateTrailing()` trailing branch. |
-| 4 | **Meta Signals integration** | med | Martin request (S35). External signal provider (Krown recommends). Research their API/webhook format before committing. |
-| 5 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
-| 6 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |
-| 7 | **S3 re-evaluation** | low | Mean-reversion on BTC perps structurally unfavorable. Revisit if Martin fine-tunes StochRSI. |
-| 8 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding available. |
+| 2 | **Activate trailing SL** | low | Both modes deployed (S37+S38). After first trade confirms baseline SL → flip `TRAILING_MODE=breakeven` or `trailing` on VPS. |
+| 3 | **Meta Signals integration** | med | Martin request (S35). External signal provider (Krown recommends). Research their API/webhook format before committing. |
+| 4 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
+| 5 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |
+| 6 | **S3 re-evaluation** | low | Mean-reversion on BTC perps structurally unfavorable. Revisit if Martin fine-tunes StochRSI. |
+| 7 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding available. |
