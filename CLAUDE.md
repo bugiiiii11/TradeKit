@@ -8,7 +8,7 @@
 - **Bankroll:** ~$500 USDC on Hyperliquid mainnet (desktop Perps account)
 - **Master wallet:** `0x3a8a318097017aCE0db8276ea435F26DE8674C46` (MetaMask)
 - **API wallet:** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (trade-only, no withdraw)
-- **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$390 USDC, separate account)
+- **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$358 USDC, separate account)
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
 - **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S6 at 1.0x leverage (S3 disabled)
@@ -131,7 +131,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 
 **Portfolio:** max concurrent=3, max exposure=60%, daily DD=10%→24h pause, weekly DD=15%→48h pause, consecutive losses=3→4h pause
 
-**Per-trade:** 5% margin × strategy leverage (S1: 10x→$390, S2: 8x→$312, S6: 8x→$312 notional at ~$390 VPS bankroll)
+**Per-trade:** 5% margin × strategy leverage (S1: 10x→$358, S2: 8x→$286, S6: 8x→$286 notional at ~$358 VPS bankroll)
 
 ## Background Processes
 

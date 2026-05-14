@@ -31,6 +31,34 @@ Both captured in What To Do Next. No code changes this session.
 
 ---
 
+## What Was Done (Session 39) — S6 warmup fix + lookback calibration
+
+### VPS Health Check
+Bot healthy, 39h uptime, zero unstable restarts. Balance $357.92. Zero bot trades. S1 blocked by Daily-EMA200=below. S6 BBWP oscillating 22–78, never entering deep compression (<20). S5 cascade receiving medium signals (correctly ignored).
+
+### Balance Investigation (P0)
+$320.67 → $357.92 explained: Martin's manual trades on VPS account via Hyperliquid web UI. 51 fills over 14 days, net PnL -$35.71, fees -$4.54, funding -$0.76. The $320.67 was withdrawable with margin locked for a 0.0125 BTC LONG (May 8–13). No deposits. Starting balance was ~$399, now $357.92.
+
+### S6 Warmup Gap Fixed (P1)
+After every pm2 restart, `barsSinceCompression` started at Infinity — S6 was blind to compression that happened before boot. Fixed by:
+- `s6_bbwp_breakout.ts` — added `seedS6Compression()` that replays historical 1H BBWP through the counter
+- `candle-consumer.ts` — added `getHistoricalBBWP1H()` to expose warmup data
+- `main-headless.ts` — calls seed after consumer starts
+- 7 unit tests in `test_s6_seed.ts`, all pass
+
+### COMPRESSION_LOOKBACK 10→40 (P2)
+Stale comment said "4H bars (~40 hours)" but S6 runs on 1H — actual window was 10 hours, not 40. Ran 26-month A/B backtest (`backtest_s6_lookback.ts`):
+- Lookback=10: 139 trades, 44.6% WR, +$109.79 PnL, 5.4% max DD
+- Lookback=40: 183 trades, 45.9% WR, +$147.02 PnL, 5.9% max DD
+- Same profit factor (1.56). Lookback=40 wins — +34% more PnL, +32% more trades.
+
+Changed default to 40, fixed all stale "4H" comments to "1H".
+
+### Deployed to VPS
+Committed `a15ad8e`, pushed, deployed via `git pull && npx tsc && pm2 restart trading-bot`. Verified seed message in logs: `[S6] Compression counter seeded from 112 historical 1H bars — barsSinceCompression=67`. First S6-diag shows `compress=68bars(FAIL)` (correct — no compression <20 in 67h).
+
+---
+
 ## What Was Done (Session 36) — Trailing stop-loss design research
 
 ### VPS Health Check
@@ -123,7 +151,7 @@ Committed: `13a4866`. Deployed to VPS with `TRAILING_MODE=off` (zero-risk, same 
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $320.67, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP crossed 50 but EMA21=below (short direction). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
+| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $357.92, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP not in compression. S6 warmup + lookback fixed (S39). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
 | 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
 | 2026-05-11 | Trailing SL deployed (off) | Both breakeven + trailing modes on VPS, `TRAILING_MODE=off`. Activate after first real bot trade confirms baseline SL. | Add `TRAILING_MODE=breakeven` (or `trailing`) to VPS `.env` + `pm2 restart trading-bot` |
 
@@ -131,9 +159,9 @@ Committed: `13a4866`. Deployed to VPS with `TRAILING_MODE=off` (zero-risk, same 
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades so far. Validate sizing, fee impact, SL placement. Balance $320.67. |
+| 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades so far. Validate sizing, fee impact, SL placement. Balance $357.92. S6 warmup + lookback fixed (S39). |
 | 2 | **Activate trailing SL** | low | Both modes deployed (S37+S38). After first trade confirms baseline SL → flip `TRAILING_MODE=breakeven` or `trailing` on VPS. |
-| 3 | **Meta Signals integration** | med | Martin request (S35). External signal provider (Krown recommends). Research their API/webhook format before committing. |
+| 3 | **Meta Signals summary → Martin** | low | S38 research done: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. Also confirm VPS manual trading + balance. |
 | 4 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
 | 5 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |
 | 6 | **S3 re-evaluation** | low | Mean-reversion on BTC perps structurally unfavorable. Revisit if Martin fine-tunes StochRSI. |
