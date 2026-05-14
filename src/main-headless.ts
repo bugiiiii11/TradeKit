@@ -23,7 +23,7 @@ import type { IndicatorSnapshot } from "./tradingview/reader";
 import { evaluateS1, shouldExitS1 } from "./strategy/s1_ema_trend";
 import { evaluateS2, shouldExitS2 } from "./strategy/s2_mean_reversion";
 import { evaluateS3, shouldExitS3 } from "./strategy/s3_stoch_rsi";
-import { evaluateS6, shouldExitS6, resetS6ExitState, S6_STOP_DISTANCE } from "./strategy/s6_bbwp_breakout";
+import { evaluateS6, shouldExitS6, resetS6ExitState, S6_STOP_DISTANCE, seedS6Compression } from "./strategy/s6_bbwp_breakout";
 import { evaluateS5, shouldExitS5, getPendingSignal, S5_STOP_DISTANCE } from "./strategy/s5_cascade";
 import { recordFundingRate, checkFundingFilter } from "./strategy/s7_funding_filter";
 import { startWebhookServer, getCascadeHeartbeatStatus, resetCascadeHeartbeatCount } from "./webhook/server";
@@ -985,6 +985,9 @@ async function main(): Promise<void> {
   });
 
   await consumer.start();
+  if (ENABLED_STRATEGIES.includes("S6")) {
+    seedS6Compression(consumer.getHistoricalBBWP1H());
+  }
   console.log("[Bot-VPS] WebSocket consumer running — waiting for bar closes...");
   sendDiscord("status",
     `Bot started\nStrategies: ${ENABLED_STRATEGIES.join(", ")}\nLeverage: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x, S6=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x)\nBalance: $${STARTING_BANKROLL}`,

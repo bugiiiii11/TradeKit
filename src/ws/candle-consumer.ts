@@ -244,6 +244,12 @@ export class CandleConsumer {
     });
   }
 
+  getHistoricalBBWP1H(): number[] {
+    const candles1H = aggregateTo1H(this.buffer);
+    const bars1H = buildBarData(candles1H, this.config.indicatorParams);
+    return bars1H.map(b => b.bbwp).filter(v => !isNaN(v));
+  }
+
   private mergeWarmup(warmup: Candle[], aggregated: Candle[]): Candle[] {
     if (warmup.length === 0 || aggregated.length === 0) return aggregated;
     const firstAggTs = aggregated[0].timestamp;

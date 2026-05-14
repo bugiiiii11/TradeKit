@@ -1,13 +1,13 @@
 /**
  * Strategy 6: BBWP Volatility Breakout
  *
- * Timeframe: 4H (primary signal)
+ * Timeframe: 1H (primary signal)
  * Style: Trend-following — catches explosive breakouts from compressed volatility
  *
- * Entry: BBWP crosses above 50 after recent compression (<20 within lookback)
- * Direction: Price > EMA21 on 4H = LONG, Price < EMA21 = SHORT
+ * Entry: BBWP crosses above 50 after recent compression (<20 within 40 1H bars)
+ * Direction: Price > EMA21 on 1H = LONG, Price < EMA21 = SHORT
  * Stop: 2% (tighter than S1's 3% — breakouts work immediately or fail)
- * Exit: EMA8/EMA55 reverse cross on 4H, OR BBWP expansion cycle complete (>85 → <35)
+ * Exit: EMA8/EMA55 reverse cross on 1H, OR BBWP expansion cycle complete (>85 → <35)
  */
 
 import type { Signal, Direction } from "./types";
@@ -16,7 +16,9 @@ import { sendDiscord, Colors } from "../notifications/discord";
 const S6_STOP_DISTANCE = 0.02;
 const COMPRESSION_THRESHOLD = 20;
 const EXPANSION_THRESHOLD = 50;
-const COMPRESSION_LOOKBACK = 10; // 4H bars (~40 hours)
+let compressionLookback = 40; // 1H bars (~40 hours)
+
+export function setS6Lookback(n: number): void { compressionLookback = n; }
 
 // ── Module state ────────────────────────────────────────────────
 
@@ -28,7 +30,25 @@ export function resetS6State(): void {
   barsSinceCompression = Infinity;
 }
 
-// ── Entry evaluation (call on each new 4H bar) ─────────────────
+export function seedS6Compression(bbwpHistory: number[]): void {
+  barsSinceCompression = Infinity;
+  for (const bbwp of bbwpHistory) {
+    if (bbwp < COMPRESSION_THRESHOLD) {
+      barsSinceCompression = 0;
+    } else {
+      barsSinceCompression++;
+    }
+  }
+  if (bbwpHistory.length > 0) {
+    prevBbwp = bbwpHistory[bbwpHistory.length - 1];
+  }
+  console.log(
+    `[S6] Compression counter seeded from ${bbwpHistory.length} historical 1H bars — ` +
+    `barsSinceCompression=${barsSinceCompression === Infinity ? "never" : barsSinceCompression}`
+  );
+}
+
+// ── Entry evaluation (call on each new 1H bar) ─────────────────
 
 export interface S6Snapshot {
   bbwp: number;
@@ -46,7 +66,7 @@ export function evaluateS6(snap: S6Snapshot): Signal | null {
   }
 
   const crossUp = prevBbwp !== null && prevBbwp < EXPANSION_THRESHOLD && bbwp >= EXPANSION_THRESHOLD;
-  const recentCompression = barsSinceCompression <= COMPRESSION_LOOKBACK;
+  const recentCompression = barsSinceCompression <= compressionLookback;
 
   const diagMsg =
     `BBWP=${bbwp.toFixed(1)} prev=${prevBbwp?.toFixed(1) ?? "—"} ` +
@@ -68,7 +88,7 @@ export function evaluateS6(snap: S6Snapshot): Signal | null {
   return signal;
 }
 
-// ── Exit evaluation (call on each new 4H bar while in position) ─
+// ── Exit evaluation (call on each new 1H bar while in position) ─
 
 export interface S6ExitSnapshot {
   bbwp: number;
@@ -97,7 +117,7 @@ export function shouldExitS6(
     return { exit: true, reason: "bbwp_cycle_complete" };
   }
 
-  // Exit 2: EMA8/EMA55 reverse cross on 4H (same logic as S1)
+  // Exit 2: EMA8/EMA55 reverse cross on 1H (same logic as S1)
   const isAbove = ema8 > ema55;
   if (prevEma8Above55 !== null) {
     if (direction === "long" && prevEma8Above55 && !isAbove) {

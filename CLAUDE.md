@@ -43,7 +43,7 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 
 **Hyperliquid:** `src/hyperliquid/client.ts` (SDK init), `account.ts` (balance, positions, funding, fills), `orders.ts` (market/limit, SL/TP, scaled TPs, stop cleanup, isolated margin)
 
-**Strategy:** `s1_ema_trend.ts` (4H EMA8/55 cross + Daily macro), `s2_mean_reversion.ts` (1H EMA55 retest, BBWP<35, PMARP), `s3_stoch_rsi.ts` (15m StochRSI, BBWP<40 filter, 45min min hold), `s5_cascade.ts` (DeFi liquidation cascade SHORT, 4% stop, 8h max hold, webhook-triggered), `s6_bbwp_breakout.ts` (1H BBWP >50 from <20 compression, EMA21 direction, bypasses confluence), `s7_funding_filter.ts` (funding rate velocity filter, parked), `confluence.ts` (scoring + EMA200 macro filter + per-strategy leverage)
+**Strategy:** `s1_ema_trend.ts` (4H EMA8/55 cross + Daily macro), `s2_mean_reversion.ts` (1H EMA55 retest, BBWP<35, PMARP), `s3_stoch_rsi.ts` (15m StochRSI, BBWP<40 filter, 45min min hold), `s5_cascade.ts` (DeFi liquidation cascade SHORT, 4% stop, 8h max hold, webhook-triggered), `s6_bbwp_breakout.ts` (1H BBWP >50 from <20 compression within 40 1H bars, EMA21 direction, bypasses confluence), `s7_funding_filter.ts` (funding rate velocity filter, parked), `confluence.ts` (scoring + EMA200 macro filter + per-strategy leverage)
 
 **Webhook:** `src/webhook/server.ts` (Node http, POST /webhook/cascade, Bearer auth for S5 signals)
 
