@@ -3,6 +3,7 @@
  */
 
 import type { FundingRate } from "./funding-loader";
+import type { TrailingMode } from "../risk/trailing";
 
 export interface Candle {
   timestamp: number; // bar open time, epoch ms
@@ -91,6 +92,12 @@ export interface BacktestConfig {
   fundingRates?: FundingRate[];
   /** Enable S7 funding rate momentum filter for S1/S2 entries. */
   s7Filter?: boolean;
+  /** Trailing SL mode for the backtest. Default: "off". */
+  trailingMode?: TrailingMode;
+  /** Trailing activation distance as fraction. Default: 0.02 (2%). */
+  trailingDistance?: number;
+  /** Breakeven buffer above/below entry. Default: 0.001 (0.1%). */
+  breakevenBuffer?: number;
 }
 
 /** A signal that was blocked by the regime filter. */
@@ -134,4 +141,6 @@ export interface BacktestResult {
   filteredSignals?: FilteredSignal[];
   /** Number of S1/S2 entries blocked by S7 funding filter. */
   s7Blocked?: number;
+  /** Number of trailing SL moves across all trades. */
+  trailingSlMoves?: number;
 }

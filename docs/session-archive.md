@@ -1,9 +1,14 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-34). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-37). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
 
 ## Session 36 — Trailing Stop-Loss Design (archived from handoff.md)
+
+### VPS Health Check
+Bot healthy, ticking every 15m. Balance $320.67 (unchanged). Zero bot trades. S6 BBWP climbed from 0.4 → 30.2 (approaching 50 breakout threshold, EMA21=above/long). S5 still receiving medium cascade signals (correctly ignored). No errors.
+
+### Trailing Stop-Loss Design
 
 **Research finding:** Hyperliquid does NOT support native trailing stops. SDK order types are limited to fixed-price trigger orders. No trailing distance parameter.
 
@@ -1023,4 +1028,48 @@ Ran `download_binance.ts --months=26`. Klines now cover March 2024 → May 7, 20
 
 ### Settings Cleanup
 Moved machine-specific SSH permission from `.claude/settings.json` to `settings.local.json`. Committed: `705a91c`.
+
+---
+
+## Session 35 — Health check + dashboard validation
+
+### VPS Health Check
+Bot online 42h, zero unstable restarts, zero errors. Balance $320.67 (unchanged). 82 bar closes processed, all "No signals." S1 blocked by `Daily-EMA200=below`. S6 BBWP in extreme compression (0.4) — waiting for breakout above 50. Command bus recovered from one `CHANNEL_ERROR` (auto-reconnect after 1 retry).
+
+### S5 Cascade Webhook
+10 cascade signals received (all `severity=medium`, $25-27M impact, Ethereum). All correctly ignored — S5 requires `high` severity. Pipe confirmed working.
+
+### Dashboard Controls Validated
+Martin tested on production (`trade-kit.vercel.app`): S1/S6 toggles work, leverage slider works. Full command bus round-trip confirmed. Quote: "leverage je mega funkcia" (leverage is a great feature).
+
+### Martin Feature Requests
+1. **Trailing stop-loss** — auto-move SL into profit on winning trades
+2. **Meta Signals integration** — external signal provider (Krown recommends, claims high win rate)
+
+Both captured in What To Do Next. No code changes this session.
+
+---
+
+## Session 37 — Trailing stop-loss implementation (breakeven mode)
+
+### Trailing Stop-Loss (breakeven mode) — deployed, inactive
+
+Implemented bot-managed trailing SL using Hyperliquid SDK `modify()`. Four changes:
+
+1. **`src/hyperliquid/orders.ts`** — added `modifyStopLoss()` function (modifies trigger order `triggerPx` by OID)
+2. **`src/main-headless.ts`** — added `TrailingMode` type, env var parsing (`TRAILING_MODE`, `TRAILING_DISTANCE`, `BREAKEVEN_BUFFER`), `trailingMode`+`breakevenApplied` fields on `ActivePosition`, `checkTrailingStops()` in main loop (step 3.5, after reconciliation)
+3. **`src/risk/trailing.ts`** (new) — pure function `evaluateTrailing()`: checks activation threshold, returns new SL at entry ± buffer, ratchet-only
+4. **`src/scripts/test_trailing.ts`** (new) — 21 unit tests (both directions, edge cases). All pass.
+
+**Design decisions:**
+- Breakeven activates when mark price moves ≥ `TRAILING_DISTANCE` (2%) in our favor
+- SL moves to entry + `BREAKEVEN_BUFFER` (0.1%) to avoid spread/slippage stops
+- One-time move, then static (no continuous trailing — that's S38)
+- If `modify()` fails, logs error but keeps existing SL (stale > none)
+- Manual positions excluded from trailing logic
+
+Committed: `17331cf`. Deployed to VPS with `TRAILING_MODE=off` (zero-risk). Will activate `breakeven` after first real bot trade validates baseline SL flow.
+
+### VPS Health Check
+Bot healthy, ticking every 15m. Balance $320.67 (unchanged). S6 BBWP=62.3 (crossed 50 but EMA21=below/short direction). S1 still blocked by Daily-EMA200=below. Martin's manual position hydrated correctly on restart.
 

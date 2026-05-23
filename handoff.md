@@ -12,22 +12,40 @@
 
 ---
 
-## What Was Done (Session 35) — Health check + dashboard validation
+## What Was Done (Session 40) — Trailing SL backtest + handoff trim
 
-### VPS Health Check
-Bot online 42h, zero unstable restarts, zero errors. Balance $320.67 (unchanged). 82 bar closes processed, all "No signals." S1 blocked by `Daily-EMA200=below`. S6 BBWP in extreme compression (0.4) — waiting for breakout above 50. Command bus recovered from one `CHANNEL_ERROR` (auto-reconnect after 1 retry).
+### VPS Health Check (P0)
+Bot healthy, 13h uptime (pm2 restarted after WS reconnection failure — designed behavior, ↺=36). Balance $354.32 (down $3.60 from S39, likely funding). S6 seed counter confirmed working: `compress` incrementing correctly across bar closes (28→29→30→31). S6 BBWP=97.6 (extreme high, no compression). S1 blocked (Daily-EMA200=below). Zero bot trades. Minor `MaxListenersExceededWarning` during WS reconnect (event listener leak, not critical).
 
-### S5 Cascade Webhook
-10 cascade signals received (all `severity=medium`, $25-27M impact, Ethereum). All correctly ignored — S5 requires `high` severity. Pipe confirmed working.
+### Handoff Trim (P1)
+Archived S35, S36, S37 to `docs/session-archive.md`. Handoff now holds S38–S40 only.
 
-### Dashboard Controls Validated
-Martin tested on production (`trade-kit.vercel.app`): S1/S6 toggles work, leverage slider works. Full command bus round-trip confirmed. Quote: "leverage je mega funkcia" (leverage is a great feature).
+### Trailing SL Backtest (P2) — decision: trailing mode
+Wired `evaluateTrailing()` into the backtest engine. Three-variant A/B/C test on 429 days of S1+S6 data with actual Binance funding rates.
 
-### Martin Feature Requests
-1. **Trailing stop-loss** — auto-move SL into profit on winning trades
-2. **Meta Signals integration** — external signal provider (Krown recommends, claims high win rate)
+**Mark price simulation:** bar HIGH (long) / bar LOW (short) — conservative. If trailing tightens SL and the same bar's adverse price hits the new SL, the position exits.
 
-Both captured in What To Do Next. No code changes this session.
+**Results (S1+S6, $500 bankroll, 5% margin):**
+
+| Metric | Baseline | Breakeven | Trailing |
+|--------|----------|-----------|----------|
+| Trades | 177 | 194 | 222 |
+| Win Rate | 46.3% | 54.6% | 47.3% |
+| PnL | +$146 | +$174 | **+$181** |
+| Profit Factor | 1.58 | 1.79 | 1.80 |
+| Max DD | 6.0% | 4.2% | **4.1%** |
+| Sharpe | 2.93 | 3.37 | **3.91** |
+| SL Moves | — | 101 | 1,902 |
+| Stop exits | 28 | 62 | 145 |
+
+**Decision: TRAILING_MODE=trailing.** Wins on all three key metrics (PnL, drawdown, Sharpe). Stop-loss exit spike (28→145) is trailing doing its job — preempting signal exits to capture profit before pullbacks. Avg loss drops -$2.65→-$1.95.
+
+**Do NOT activate yet.** `modifyStopLoss()` is still in Untested Code Paths. First trade should validate baseline SL mechanics. Then flip to trailing with data behind the decision.
+
+**Changes:**
+- `src/backtest/types.ts` — added `trailingMode`, `trailingDistance`, `breakevenBuffer` to config; `trailingSlMoves` to result
+- `src/backtest/engine.ts` — trailing SL evaluation step before exit checks, `breakevenApplied` state tracking
+- `src/scripts/backtest_trailing.ts` — A/B/C test script
 
 ---
 
@@ -56,41 +74,6 @@ Changed default to 40, fixed all stale "4H" comments to "1H".
 
 ### Deployed to VPS
 Committed `a15ad8e`, pushed, deployed via `git pull && npx tsc && pm2 restart trading-bot`. Verified seed message in logs: `[S6] Compression counter seeded from 112 historical 1H bars — barsSinceCompression=67`. First S6-diag shows `compress=68bars(FAIL)` (correct — no compression <20 in 67h).
-
----
-
-## What Was Done (Session 36) — Trailing stop-loss design research
-
-### VPS Health Check
-Bot healthy, ticking every 15m. Balance $320.67 (unchanged). Zero bot trades. S6 BBWP climbed from 0.4 → 30.2 (approaching 50 breakout threshold, EMA21=above/long). S5 still receiving medium cascade signals (correctly ignored). No errors.
-
-### Trailing Stop-Loss Design
-Researched and designed bot-managed trailing SL via Hyperliquid `modify()` (no native trailing support). Three modes: off/breakeven/trailing. Full design archived to `docs/session-archive.md` — implemented in S37 (breakeven) and S38 (trailing).
-
----
-
-## What Was Done (Session 37) — Trailing stop-loss implementation (breakeven mode)
-
-### Trailing Stop-Loss (breakeven mode) — deployed, inactive
-
-Implemented bot-managed trailing SL using Hyperliquid SDK `modify()`. Four changes:
-
-1. **`src/hyperliquid/orders.ts`** — added `modifyStopLoss()` function (modifies trigger order `triggerPx` by OID)
-2. **`src/main-headless.ts`** — added `TrailingMode` type, env var parsing (`TRAILING_MODE`, `TRAILING_DISTANCE`, `BREAKEVEN_BUFFER`), `trailingMode`+`breakevenApplied` fields on `ActivePosition`, `checkTrailingStops()` in main loop (step 3.5, after reconciliation)
-3. **`src/risk/trailing.ts`** (new) — pure function `evaluateTrailing()`: checks activation threshold, returns new SL at entry ± buffer, ratchet-only
-4. **`src/scripts/test_trailing.ts`** (new) — 21 unit tests (both directions, edge cases). All pass.
-
-**Design decisions:**
-- Breakeven activates when mark price moves ≥ `TRAILING_DISTANCE` (2%) in our favor
-- SL moves to entry + `BREAKEVEN_BUFFER` (0.1%) to avoid spread/slippage stops
-- One-time move, then static (no continuous trailing — that's S38)
-- If `modify()` fails, logs error but keeps existing SL (stale > none)
-- Manual positions excluded from trailing logic
-
-Committed: `17331cf`. Deployed to VPS with `TRAILING_MODE=off` (zero-risk). Will activate `breakeven` after first real bot trade validates baseline SL flow.
-
-### VPS Health Check
-Bot healthy, ticking every 15m. Balance $320.67 (unchanged). S6 BBWP=62.3 (crossed 50 but EMA21=below/short direction). S1 still blocked by Daily-EMA200=below. Martin's manual position hydrated correctly on restart.
 
 ---
 
@@ -151,16 +134,16 @@ Committed: `13a4866`. Deployed to VPS with `TRAILING_MODE=off` (zero-risk, same 
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $357.92, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP not in compression. S6 warmup + lookback fixed (S39). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
+| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $354.32, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP=97.6 (extreme high). S6 warmup + lookback fixed (S39). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
 | 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
-| 2026-05-11 | Trailing SL deployed (off) | Both breakeven + trailing modes on VPS, `TRAILING_MODE=off`. Activate after first real bot trade confirms baseline SL. | Add `TRAILING_MODE=breakeven` (or `trailing`) to VPS `.env` + `pm2 restart trading-bot` |
+| 2026-05-11 | Trailing SL deployed (off) | Backtest (S40): trailing wins on PnL/DD/Sharpe. `TRAILING_MODE=off` until first real trade validates baseline SL. Then flip to `trailing`. | Add `TRAILING_MODE=trailing` to VPS `.env` + `pm2 restart trading-bot` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
 | 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades so far. Validate sizing, fee impact, SL placement. Balance $357.92. S6 warmup + lookback fixed (S39). |
-| 2 | **Activate trailing SL** | low | Both modes deployed (S37+S38). After first trade confirms baseline SL → flip `TRAILING_MODE=breakeven` or `trailing` on VPS. |
+| 2 | **Activate trailing SL** | low | Backtest (S40) decided: `trailing` mode. After first trade confirms baseline SL → flip `TRAILING_MODE=trailing` on VPS. |
 | 3 | **Meta Signals summary → Martin** | low | S38 research done: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. Also confirm VPS manual trading + balance. |
 | 4 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
 | 5 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |

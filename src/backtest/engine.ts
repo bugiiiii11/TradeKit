@@ -25,6 +25,7 @@ import { evaluateS6, resetS6State, S6_STOP_DISTANCE } from "../strategy/s6_bbwp_
 import { scoreSignals, getLeverageForSignals } from "../strategy/confluence";
 import type { IndicatorSnapshot, Timeframe } from "../tradingview/reader";
 import { computeRegimeMap, type RegimeInfo } from "./regime-filter";
+import { evaluateTrailing } from "../risk/trailing";
 import { getFundingRateAt, type FundingRate } from "./funding-loader";
 import type {
   AlignedBar,
@@ -48,6 +49,9 @@ const MS_PER_8H = 8 * MS_PER_HOUR;
 // S7 funding filter constants (mirror s7_funding_filter.ts)
 const S7_LOOKBACK_BARS = 16; // 4 hours at 15m intervals
 const S7_MAX_HISTORY = 100;
+
+const DEFAULT_TRAILING_DISTANCE = 0.02;
+const DEFAULT_BREAKEVEN_BUFFER = 0.001;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -252,6 +256,10 @@ export function runBacktest(
   const s7History: number[] = [];
   let s7Blocked = 0;
 
+  // Trailing SL state
+  let breakevenApplied = false;
+  let trailingSlMoves = 0;
+
   // Regime filter: extract unique daily bars and pre-compute regime map
   let regimeMap: Map<number, RegimeInfo> | null = null;
   if (config.regimeFilter) {
@@ -307,6 +315,26 @@ export function runBacktest(
 
     // === PHASE 1: EXIT CHECKS (before evaluate() updates module prev state) ===
 
+    // Trailing SL: evaluate before exit checks so updated SL is used
+    if (openPos && config.trailingMode && config.trailingMode !== "off") {
+      const favorableMark = openPos.direction === "long" ? bar15m.high : bar15m.low;
+      const trResult = evaluateTrailing({
+        direction: openPos.direction,
+        entryPrice: openPos.entryPrice,
+        currentStopPrice: openPos.stopPrice,
+        markPrice: favorableMark,
+        trailingMode: config.trailingMode,
+        breakevenApplied,
+        activationDistance: config.trailingDistance ?? DEFAULT_TRAILING_DISTANCE,
+        breakevenBuffer: config.breakevenBuffer ?? DEFAULT_BREAKEVEN_BUFFER,
+      });
+      if (trResult.shouldMove && trResult.newStopPrice !== null) {
+        openPos.stopPrice = trResult.newStopPrice;
+        if (config.trailingMode === "breakeven") breakevenApplied = true;
+        trailingSlMoves++;
+      }
+    }
+
     // S6 BBWP cycle exit (needs per-position state tracking)
     if (openPos && openPos.strategy === "S6") {
       if (bar1H.bbwp > 85) s6PeakBbwp = Math.max(s6PeakBbwp, bar1H.bbwp);
@@ -320,6 +348,7 @@ export function runBacktest(
         accumulatedFunding = 0;
         lastFundingHour = -1;
         s6PeakBbwp = 0;
+        breakevenApplied = false;
       }
     }
 
@@ -335,6 +364,7 @@ export function runBacktest(
         accumulatedFunding = 0;
         lastFundingHour = -1;
         s6PeakBbwp = 0;
+        breakevenApplied = false;
       }
     }
 
@@ -484,6 +514,7 @@ export function runBacktest(
     stats: computeStats(trades, config.bankroll, equityCurve),
     filteredSignals: config.regimeFilter ? filteredSignals : undefined,
     s7Blocked: config.s7Filter ? s7Blocked : undefined,
+    trailingSlMoves: config.trailingMode && config.trailingMode !== "off" ? trailingSlMoves : undefined,
   };
 }
 
