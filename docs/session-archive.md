@@ -1,7 +1,24 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-37). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-38). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+## Session 38 — Trailing stop-loss: continuous trailing mode (archived from handoff.md)
+
+### VPS Health Check
+Bot healthy, ticking every 15m. Balance $320.67 (unchanged). Zero bot trades. S1 still blocked (Daily-EMA200=below). S6 BBWP=55.2 (above 50 but compress=20bars FAIL, EMA21=below/short). S5 receiving medium cascade signals (correctly ignored). Command bus auto-recovered from CHANNEL_ERROR.
+
+### Trailing Mode (continuous) — deployed, inactive
+Filled in the `trailing` branch of `evaluateTrailing()`. Three changes:
+1. `src/risk/trailing.ts` — trailing mode: `newStop = markPrice × (1 ± TRAILING_DISTANCE)`, ratchet-only
+2. `src/main-headless.ts` — fixed `breakevenApplied` flag: only set for breakeven mode (one-shot)
+3. `src/scripts/test_trailing.ts` — 16 new trailing test cases. All 37 tests pass (21 breakeven + 16 trailing).
+Committed: `13a4866`. Deployed to VPS with `TRAILING_MODE=off`.
+
+### Meta Signals Research (P3 prep)
+Algorithmic crypto signal service (Eric Crown + Crypto Zombie). 65 pairs, 10 timeframes, Discord-only delivery. No API/webhook. Mogul: $179/mo. Recommendation: manual execution via existing dashboard (S28). Bot integration only if they add webhook/API.
+
+---
 
 ## Session 36 — Trailing Stop-Loss Design (archived from handoff.md)
 

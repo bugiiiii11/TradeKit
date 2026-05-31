@@ -12,6 +12,25 @@
 
 ---
 
+## What Was Done (Session 41) — Reconnect guard + data refresh
+
+### VPS Health Check (P0)
+Bot healthy, 25h uptime, ↺=37 (+1 from S40, normal WS reconnect). Balance $341.22 (down $13 from S40's $354.32 — likely funding on Martin's manual positions, zero bot trades). S1 blocked (Daily-EMA200=below). **S6 BBWP=3.6** (extreme low — full swing from 97.6 in S40). Compression counter working: `compress=0bars(ok)`, EMA21 flipping between above/below. S5 receiving medium cascade signals, correctly ignored. Supabase CHANNEL_ERROR auto-recovered.
+
+### WS Reconnect Concurrency Fix (P1)
+Investigated MaxListenersExceededWarning from S40. Root cause: **not** our candle consumer (uses Node 22 built-in WebSocket = EventTarget, no listener limit). Actual source: **Supabase Realtime** `@supabase/realtime-js` depends on `ws` package (EventEmitter, default max 10). On CHANNEL_ERROR reconnects, `ws` close listeners accumulate.
+
+Fixed two things:
+1. **`src/ws/candle-consumer.ts`** — added `reconnecting` guard flag with `try/finally` to prevent concurrent `reconnect()` calls from overlapping `setInterval` heartbeat ticks (real concurrency bug: if reconnect takes >30s, next tick races it)
+2. **`src/main-headless.ts`** — `EventEmitter.defaultMaxListeners = 20` to suppress Supabase `ws` warning
+
+### Backtest Data Refresh (P2)
+Updated klines: May partial 672→2,931 rows (through May 31). 78,867 total rows, 27 files. Funding rates updated through May 31 (2,373 records).
+
+**Changes:** `9ac6569`
+
+---
+
 ## What Was Done (Session 40) — Trailing SL backtest + handoff trim
 
 ### VPS Health Check (P0)
@@ -77,72 +96,22 @@ Committed `a15ad8e`, pushed, deployed via `git pull && npx tsc && pm2 restart tr
 
 ---
 
-## What Was Done (Session 38) — Trailing stop-loss: continuous trailing mode
-
-### VPS Health Check
-Bot healthy, ticking every 15m. Balance $320.67 (unchanged). Zero bot trades. S1 still blocked (Daily-EMA200=below). S6 BBWP=55.2 (above 50 but compress=20bars FAIL, EMA21=below/short). S5 receiving medium cascade signals (correctly ignored). Command bus auto-recovered from CHANNEL_ERROR.
-
-### Trailing Mode (continuous) — deployed, inactive
-
-Filled in the `trailing` branch of `evaluateTrailing()`. Three changes:
-
-1. **`src/risk/trailing.ts`** — trailing mode: `newStop = markPrice × (1 ± TRAILING_DISTANCE)`, ratchet-only (never moves SL against position)
-2. **`src/main-headless.ts`** — fixed `breakevenApplied` flag: only set for breakeven mode (one-shot), never for trailing (continuous)
-3. **`src/scripts/test_trailing.ts`** — 16 new trailing test cases (long/short trails, ratchet holds, breakevenApplied ignored). All 37 tests pass (21 breakeven + 16 trailing).
-
-Committed: `13a4866`. Deployed to VPS with `TRAILING_MODE=off` (zero-risk, same pattern as S37).
-
-**Note:** VPS bot working directory is `/home/ubuntu/trading-bot` (not `TradeKit`).
-
-### Meta Signals Research (P3 prep)
-
-**What is it:** Algorithmic crypto signal service by Eric "Krown" Crown and "K-DUB" Crypto Zombie. Proprietary algorithms scan 65 pairs across 10 timeframes (30m to 24H) 24/7. Not a copy-trading platform — delivers trade ideas with SL/TP, trader executes manually.
-
-**Signal format (confirmed fields):**
-- Suggested entry price
-- Suggested stop-loss (SL close above/below value)
-- Suggested take-profit (with R:R ratio per target, e.g. 1:2)
-- Timeframe (alerts organized by TF in Discord channels)
-- Pair (65 pairs, BTC/ETH/SOL/majors against USDT)
-- **Unknown:** direction (long/short) not explicitly documented on public pages, but implied by SL above (short) / SL below (long)
-
-**Delivery:** Discord-only. Alerts auto-posted to channels in a private Discord server, organized by timeframe. **No API, no webhook, no programmatic access.**
-
-**Signal frequency:**
-- Pro (Mafioso/Mogul): 300+ alerts/month (algo-triggered, no human filter)
-- Lite: 15-20 alerts/month (hand-curated by team, higher conviction)
-
-**Cost:**
-- **Mogul tier:** $179/month (billed quarterly) or $1,750/year
-- **Mafioso NFT:** lifetime access, purchased with ETH (price not publicly listed, may be sold out)
-- **Lite:** separate product, lower cost (exact price not found)
-
-**Integration assessment:**
-- **No direct integration path.** Discord-only, no API/webhook. To automate, we'd need a Discord bridge bot that:
-  1. Joins the Meta Signals Discord server
-  2. Parses alert messages from specific channels (fragile — format changes break the parser)
-  3. Forwards parsed signals as HTTP POST to our webhook receiver (like S5 cascade)
-- **Risk:** Discord ToS may prohibit automated message scraping. Meta Signals could change alert format without notice. Bridge bot adds a failure point.
-- **Alternative:** Martin trades Meta Signals alerts manually via the dashboard manual trade card (already built, S28). No bot integration needed.
-- **Recommendation:** Manual execution via existing dashboard is the pragmatic path. Bot integration only worthwhile if Meta Signals ever adds a webhook/API (ask their team via contact form at metasignals.io/contact).
-
----
-
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $354.32, zero bot trades so far. S1 blocked by Daily-EMA200, S6 BBWP=97.6 (extreme high). S6 warmup + lookback fixed (S39). | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
+| 2026-05-08 | S1+S6 at 1.0x leverage | Monitor first bot trades. Balance $341.22, zero bot trades. S1 blocked (Daily-EMA200=below). **S6 BBWP=3.6** (deep compression, full swing from 97.6 in S40). `compress=0bars(ok)` — counter just reset, S6 armed. Watch BBWP trajectory toward 50. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream"` |
 | 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
 | 2026-05-11 | Trailing SL deployed (off) | Backtest (S40): trailing wins on PnL/DD/Sharpe. `TRAILING_MODE=off` until first real trade validates baseline SL. Then flip to `trailing`. | Add `TRAILING_MODE=trailing` to VPS `.env` + `pm2 restart trading-bot` |
+| 2026-05-31 | Balance drift | $341.22 — down $13 from S40 ($354.32) with zero bot trades. Likely funding on Martin's manual positions. Confirm with Martin if continues trending. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 5 --nostream \| grep Balance"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades so far. Validate sizing, fee impact, SL placement. Balance $357.92. S6 warmup + lookback fixed (S39). |
+| 1 | **Monitor first trades at 1.0x (S1+S6)** | low | Zero bot trades. Balance $341.22. S6 BBWP=3.6 (deep compression) — closest to first trade yet. Watch BBWP trajectory toward 50. Reconnect guard deployed (S41). |
 | 2 | **Activate trailing SL** | low | Backtest (S40) decided: `trailing` mode. After first trade confirms baseline SL → flip `TRAILING_MODE=trailing` on VPS. |
 | 3 | **Meta Signals summary → Martin** | low | S38 research done: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. Also confirm VPS manual trading + balance. |
 | 4 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
