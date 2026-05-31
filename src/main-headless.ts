@@ -18,6 +18,9 @@
  */
 
 import "dotenv/config";
+import { EventEmitter } from "node:events";
+EventEmitter.defaultMaxListeners = 20;
+
 import { CandleConsumer } from "./ws/candle-consumer";
 import type { IndicatorSnapshot } from "./tradingview/reader";
 import { evaluateS1, shouldExitS1 } from "./strategy/s1_ema_trend";

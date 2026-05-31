@@ -81,6 +81,7 @@ export class CandleConsumer {
   private config: CandleConsumerConfig;
   private running = false;
   private reconnectAttempts = 0;
+  private reconnecting = false;
 
   constructor(config: CandleConsumerConfig) {
     this.config = config;
@@ -259,7 +260,7 @@ export class CandleConsumer {
 
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(async () => {
-      if (!this.running) return;
+      if (!this.running || this.reconnecting) return;
 
       const staleDuration = Date.now() - this.lastMessageTime;
       if (staleDuration > STALE_TIMEOUT_MS) {
@@ -277,49 +278,55 @@ export class CandleConsumer {
   }
 
   private async reconnect(): Promise<void> {
-    // Tear down old subscription
-    if (this.subscription) {
-      try { await this.subscription.unsubscribe(); } catch { /* ignore */ }
-      this.subscription = null;
-    }
-    if (this.transport) {
-      try { await this.transport[Symbol.asyncDispose](); } catch { /* ignore */ }
-      this.transport = null;
-    }
-    this.subsClient = null;
-
-    // REST gap-fill: fetch bars since last known timestamp
-    const lastTs = this.buffer.length > 0
-      ? this.buffer[this.buffer.length - 1].timestamp
-      : Date.now() - BUFFER_SIZE * MS_15M;
-
-    console.log("[WS] Fetching missed bars via REST...");
+    if (this.reconnecting) return;
+    this.reconnecting = true;
     try {
-      const missed = await fetchCandles("15m", lastTs, Date.now());
-      let added = 0;
-      for (const c of missed) {
-        if (c.timestamp > lastTs) {
-          this.buffer.push(c);
-          added++;
+      // Tear down old subscription
+      if (this.subscription) {
+        try { await this.subscription.unsubscribe(); } catch { /* ignore */ }
+        this.subscription = null;
+      }
+      if (this.transport) {
+        try { await this.transport[Symbol.asyncDispose](); } catch { /* ignore */ }
+        this.transport = null;
+      }
+      this.subsClient = null;
+
+      // REST gap-fill: fetch bars since last known timestamp
+      const lastTs = this.buffer.length > 0
+        ? this.buffer[this.buffer.length - 1].timestamp
+        : Date.now() - BUFFER_SIZE * MS_15M;
+
+      console.log("[WS] Fetching missed bars via REST...");
+      try {
+        const missed = await fetchCandles("15m", lastTs, Date.now());
+        let added = 0;
+        for (const c of missed) {
+          if (c.timestamp > lastTs) {
+            this.buffer.push(c);
+            added++;
+          }
         }
+        if (this.buffer.length > BUFFER_SIZE) {
+          this.buffer = this.buffer.slice(-BUFFER_SIZE);
+        }
+        if (added > 0) {
+          this.currentOpenTime = this.buffer[this.buffer.length - 1].timestamp;
+          console.log(`[WS] Gap-filled ${added} bars`);
+          this.computeAndEmit();
+        }
+      } catch (err) {
+        console.error("[WS] REST gap-fill failed:", err);
       }
-      if (this.buffer.length > BUFFER_SIZE) {
-        this.buffer = this.buffer.slice(-BUFFER_SIZE);
-      }
-      if (added > 0) {
-        this.currentOpenTime = this.buffer[this.buffer.length - 1].timestamp;
-        console.log(`[WS] Gap-filled ${added} bars`);
-        this.computeAndEmit();
-      }
-    } catch (err) {
-      console.error("[WS] REST gap-fill failed:", err);
-    }
 
-    // Re-subscribe
-    try {
-      await this.subscribe();
-    } catch (err) {
-      console.error("[WS] Reconnect failed — will retry on next heartbeat:", err);
+      // Re-subscribe
+      try {
+        await this.subscribe();
+      } catch (err) {
+        console.error("[WS] Reconnect failed — will retry on next heartbeat:", err);
+      }
+    } finally {
+      this.reconnecting = false;
     }
   }
 }
