@@ -1,7 +1,72 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-38). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-40). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+---
+
+## What Was Done (Session 40) — Trailing SL backtest + handoff trim
+
+### VPS Health Check (P0)
+Bot healthy, 13h uptime (pm2 restarted after WS reconnection failure — designed behavior, ↺=36). Balance $354.32 (down $3.60 from S39, likely funding). S6 seed counter confirmed working: `compress` incrementing correctly across bar closes (28→29→30→31). S6 BBWP=97.6 (extreme high, no compression). S1 blocked (Daily-EMA200=below). Zero bot trades. Minor `MaxListenersExceededWarning` during WS reconnect (event listener leak, not critical).
+
+### Handoff Trim (P1)
+Archived S35, S36, S37 to `docs/session-archive.md`. Handoff now holds S38–S40 only.
+
+### Trailing SL Backtest (P2) — decision: trailing mode
+Wired `evaluateTrailing()` into the backtest engine. Three-variant A/B/C test on 429 days of S1+S6 data with actual Binance funding rates.
+
+**Mark price simulation:** bar HIGH (long) / bar LOW (short) — conservative. If trailing tightens SL and the same bar's adverse price hits the new SL, the position exits.
+
+**Results (S1+S6, $500 bankroll, 5% margin):**
+
+| Metric | Baseline | Breakeven | Trailing |
+|--------|----------|-----------|----------|
+| Trades | 177 | 194 | 222 |
+| Win Rate | 46.3% | 54.6% | 47.3% |
+| PnL | +$146 | +$174 | **+$181** |
+| Profit Factor | 1.58 | 1.79 | 1.80 |
+| Max DD | 6.0% | 4.2% | **4.1%** |
+| Sharpe | 2.93 | 3.37 | **3.91** |
+| SL Moves | — | 101 | 1,902 |
+| Stop exits | 28 | 62 | 145 |
+
+**Decision: TRAILING_MODE=trailing.** Wins on all three key metrics (PnL, drawdown, Sharpe). Stop-loss exit spike (28→145) is trailing doing its job — preempting signal exits to capture profit before pullbacks. Avg loss drops -$2.65→-$1.95.
+
+**Do NOT activate yet.** `modifyStopLoss()` is still in Untested Code Paths. First trade should validate baseline SL mechanics. Then flip to trailing with data behind the decision.
+
+**Changes:**
+- `src/backtest/types.ts` — added `trailingMode`, `trailingDistance`, `breakevenBuffer` to config; `trailingSlMoves` to result
+- `src/backtest/engine.ts` — trailing SL evaluation step before exit checks, `breakevenApplied` state tracking
+- `src/scripts/backtest_trailing.ts` — A/B/C test script
+
+---
+
+## What Was Done (Session 39) — S6 warmup fix + lookback calibration
+
+### VPS Health Check
+Bot healthy, 39h uptime, zero unstable restarts. Balance $357.92. Zero bot trades. S1 blocked by Daily-EMA200=below. S6 BBWP oscillating 22–78, never entering deep compression (<20). S5 cascade receiving medium signals (correctly ignored).
+
+### Balance Investigation (P0)
+$320.67 → $357.92 explained: Martin's manual trades on VPS account via Hyperliquid web UI. 51 fills over 14 days, net PnL -$35.71, fees -$4.54, funding -$0.76. The $320.67 was withdrawable with margin locked for a 0.0125 BTC LONG (May 8–13). No deposits. Starting balance was ~$399, now $357.92.
+
+### S6 Warmup Gap Fixed (P1)
+After every pm2 restart, `barsSinceCompression` started at Infinity — S6 was blind to compression that happened before boot. Fixed by:
+- `s6_bbwp_breakout.ts` — added `seedS6Compression()` that replays historical 1H BBWP through the counter
+- `candle-consumer.ts` — added `getHistoricalBBWP1H()` to expose warmup data
+- `main-headless.ts` — calls seed after consumer starts
+- 7 unit tests in `test_s6_seed.ts`, all pass
+
+### COMPRESSION_LOOKBACK 10→40 (P2)
+Stale comment said "4H bars (~40 hours)" but S6 runs on 1H — actual window was 10 hours, not 40. Ran 26-month A/B backtest (`backtest_s6_lookback.ts`):
+- Lookback=10: 139 trades, 44.6% WR, +$109.79 PnL, 5.4% max DD
+- Lookback=40: 183 trades, 45.9% WR, +$147.02 PnL, 5.9% max DD
+- Same profit factor (1.56). Lookback=40 wins — +34% more PnL, +32% more trades.
+
+Changed default to 40, fixed all stale "4H" comments to "1H".
+
+### Deployed to VPS
+Committed `a15ad8e`, pushed, deployed via `git pull && npx tsc && pm2 restart trading-bot`. Verified seed message in logs: `[S6] Compression counter seeded from 112 historical 1H bars — barsSinceCompression=67`. First S6-diag shows `compress=68bars(FAIL)` (correct — no compression <20 in 67h).
 
 ## Session 38 — Trailing stop-loss: continuous trailing mode (archived from handoff.md)
 

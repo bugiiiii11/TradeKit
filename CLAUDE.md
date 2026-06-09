@@ -103,7 +103,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
 - **S5_ENABLED**, **S5_WEBHOOK_PORT** (default 3456), **S5_WEBHOOK_SECRET** env vars: cascade webhook receiver. Disabled by default.
 - **S7_FUNDING_FILTER** env var: parked (backtest -$3 PnL). Do not enable without new validation.
-- **TRAILING_MODE** env var: `off|breakeven|trailing` (default: `off`). Breakeven moves SL to entry+buffer once price moves ≥ TRAILING_DISTANCE in our favor (one-shot). Trailing mode follows mark price at TRAILING_DISTANCE, ratchet-only (continuous).
+- **TRAILING_MODE** env var: `off|breakeven|trailing` (default: `off`, VPS: `trailing` since S43). Breakeven moves SL to entry+buffer once price moves ≥ TRAILING_DISTANCE in our favor (one-shot). Trailing mode follows mark price at TRAILING_DISTANCE, ratchet-only (continuous).
 - **TRAILING_DISTANCE** env var: activation threshold as fraction (default: `0.02` = 2%).
 - **BREAKEVEN_BUFFER** env var: buffer above/below entry to avoid spread stops (default: `0.001` = 0.1%).
 - **Manual trades** register as `strategy: "manual"` — bot exit logic skips them, only native SL/TP closes. Hydration uses trade-log cross-check (not leverage heuristic) to distinguish bot vs web UI positions (Session 32 fix).
@@ -114,7 +114,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - Kill switch close-all with real open LIVE positions
 - Native TP trigger execution + partial fill cascade on Hyperliquid
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
-- Trailing SL `modifyStopLoss()` with real open position (breakeven S37 + trailing S38, deployed with mode=off, not yet exercised)
+- Trailing SL breakeven mode with real open position (not yet exercised — only trailing mode validated S43)
 
 **Operational:**
 - Hydration trade-log cross-check with real open position (deployed S32, validated S34+S37 — working correctly)
