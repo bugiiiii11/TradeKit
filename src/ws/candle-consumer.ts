@@ -28,6 +28,26 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const STALE_TIMEOUT_MS = 60_000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 const MS_15M = 15 * 60_000;
+// Hard ceiling on any single network await inside (re)connect. Without this, a
+// hung WS subscribe or REST gap-fill during an exchange outage can leave the
+// `reconnecting` guard pinned true forever, silently killing the bar-close loop
+// while pm2 still reports "online" (Jun 13 2026 incident — 7 days dead).
+const SUBSCRIBE_TIMEOUT_MS = 20_000;
+const GAP_FILL_TIMEOUT_MS = 20_000;
+
+/** Rejects if the wrapped promise does not settle within `ms`. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
+    );
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
 
 export interface CandleConsumerConfig {
   onBarClose: (snapshots: {
@@ -146,9 +166,13 @@ export class CandleConsumer {
 
     let subscription: { unsubscribe(): Promise<void> };
     try {
-      subscription = await subsClient.candle(
-        { coin: "BTC", interval: "15m" },
-        (candle: HLCandle) => this.onCandleMessage(candle),
+      subscription = await withTimeout(
+        subsClient.candle(
+          { coin: "BTC", interval: "15m" },
+          (candle: HLCandle) => this.onCandleMessage(candle),
+        ),
+        SUBSCRIBE_TIMEOUT_MS,
+        "[WS] subscribe",
       );
     } catch (err) {
       try { await transport[Symbol.asyncDispose](); } catch { /* ignore */ }
@@ -281,13 +305,14 @@ export class CandleConsumer {
     if (this.reconnecting) return;
     this.reconnecting = true;
     try {
-      // Tear down old subscription
+      // Tear down old subscription. Timeout-guarded: disposing a dead socket can
+      // itself hang, which would re-introduce the pinned-`reconnecting` deadlock.
       if (this.subscription) {
-        try { await this.subscription.unsubscribe(); } catch { /* ignore */ }
+        try { await withTimeout(this.subscription.unsubscribe(), SUBSCRIBE_TIMEOUT_MS, "[WS] unsubscribe"); } catch { /* ignore */ }
         this.subscription = null;
       }
       if (this.transport) {
-        try { await this.transport[Symbol.asyncDispose](); } catch { /* ignore */ }
+        try { await withTimeout(this.transport[Symbol.asyncDispose](), SUBSCRIBE_TIMEOUT_MS, "[WS] dispose"); } catch { /* ignore */ }
         this.transport = null;
       }
       this.subsClient = null;
@@ -299,7 +324,11 @@ export class CandleConsumer {
 
       console.log("[WS] Fetching missed bars via REST...");
       try {
-        const missed = await fetchCandles("15m", lastTs, Date.now());
+        const missed = await withTimeout(
+          fetchCandles("15m", lastTs, Date.now()),
+          GAP_FILL_TIMEOUT_MS,
+          "[WS] gap-fill",
+        );
         let added = 0;
         for (const c of missed) {
           if (c.timestamp > lastTs) {
