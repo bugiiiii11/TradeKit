@@ -12,6 +12,27 @@
 
 ---
 
+## What Was Done (Session 44) — P0: WS loop dead 7 days (reconnect deadlock) — recovered + fixed
+
+### VPS Deep Dive uncovered a silent P0 (was reported "healthy")
+pm2 showed `trading-bot` online, 10D uptime, ↺=40, error log empty since Jun 16 — **looked healthy**. It was not. On-chain + Supabase forensics revealed the **15m WebSocket bar-close loop had been dead since 2026-06-13 09:02** while the process stayed "online" (only the S5 cascade webhook HTTP server kept logging, masking it).
+
+**Timeline (Jun 13):** `09:00` last good bar close → `09:01:46` `[WS] No message in 66s — reconnect attempt 1/10` (Hyperliquid 502 outage) → `09:02:09` Digest error HTTP 502 → **then nothing for 7 days.** No "attempt 2/10", no bar closes, no trailing updates, no exits, no entries.
+
+**Root cause:** `reconnect()` sets `reconnecting=true` then `await subsClient.candle()`, which **hung without settling** during the outage. The `finally` that clears `reconnecting` never ran; the heartbeat guard `if (this.reconnecting) return` then suppressed every future reconnect. Flag pinned `true` forever → process never crashed → self-heal (`MAX_RECONNECT_ATTEMPTS → process.exit(1)`) never triggered. The S41 reconnect guard introduced this deadlock class (correct guard, but its gated awaits had no timeout).
+
+**Fix (`bb3171e`, deployed to VPS):** added `withTimeout()` around **every** network await in `subscribe()`/`reconnect()` — subscribe (20s), REST gap-fill (20s), unsubscribe, dispose. On timeout the await rejects → `finally` clears `reconnecting` → next heartbeat retries → eventually `process.exit(1)` → pm2 restart. Type-checks clean. Bot restarted twice (recover, then patched), both clean: position hydrated from trade-log, WS subscribed, bar closes flowing.
+
+### Trade forensics (the two S43 follow-ups)
+- **S43 SHORT closed a WIN:** S6, entry $72,729 → exit $62,613, **+$19.93 / 6.95R**, exit reason `ema_reverse_cross` (strategy exit fired, *not* the stop — trailing rode alongside). Closed 2026-06-09 13:00.
+- **New open position is also S6:** BBWP breakout **LONG** @ $62,191 (0.00243 BTC, 8x), entered 2026-06-10 17:00 (`BBWP=56.3 cross50=YES EMA21=above`). During the 7-day outage its trailing SL was frozen at $60,988 (no harm — static stop held, never hit). Post-recovery, trailing resumed and ratcheted SL $60,988 → $61,942. Currently ~+$3 (−$0.89 funding).
+- Forensics tool added: `src/scripts/investigate_long.ts` (Supabase trades/positions/bot_logs queries).
+
+### Balance
+Account value $381.22 (S43's +$19.93 SHORT win compounded in). Bot bankroll hydrates at $359.45.
+
+---
+
 ## What Was Done (Session 43) — First bot trade + trailing SL validated
 
 ### VPS Deep Dive (P0)
@@ -46,43 +67,24 @@ S42: health check, no trade, S6 BBWP 17-21 oscillating (not breaking out yet), b
 
 ---
 
-## What Was Done (Session 41) — Reconnect guard + data refresh
-
-### VPS Health Check (P0)
-Bot healthy, 25h uptime, ↺=37 (+1 from S40, normal WS reconnect). Balance $341.22 (down $13 from S40's $354.32 — likely funding on Martin's manual positions, zero bot trades). S1 blocked (Daily-EMA200=below). **S6 BBWP=3.6** (extreme low — full swing from 97.6 in S40). Compression counter working: `compress=0bars(ok)`, EMA21 flipping between above/below. S5 receiving medium cascade signals, correctly ignored. Supabase CHANNEL_ERROR auto-recovered.
-
-### WS Reconnect Concurrency Fix (P1)
-Investigated MaxListenersExceededWarning from S40. Root cause: **not** our candle consumer (uses Node 22 built-in WebSocket = EventTarget, no listener limit). Actual source: **Supabase Realtime** `@supabase/realtime-js` depends on `ws` package (EventEmitter, default max 10). On CHANNEL_ERROR reconnects, `ws` close listeners accumulate.
-
-Fixed two things:
-1. **`src/ws/candle-consumer.ts`** — added `reconnecting` guard flag with `try/finally` to prevent concurrent `reconnect()` calls from overlapping `setInterval` heartbeat ticks (real concurrency bug: if reconnect takes >30s, next tick races it)
-2. **`src/main-headless.ts`** — `EventEmitter.defaultMaxListeners = 20` to suppress Supabase `ws` warning
-
-### Backtest Data Refresh (P2)
-Updated klines: May partial 672→2,931 rows (through May 31). 78,867 total rows, 27 files. Funding rates updated through May 31 (2,373 records).
-
-**Changes:** `9ac6569`
-
----
-
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-06-09 | S6 SHORT open + trailing SL active | Entry $72,729, SL ratcheted to $64,093 (trailing mode). BTC ~$62,883. Monitor exit signal (EMA8/55 cross or BBWP cycle >85→<35). Trailing ratchets every 15m bar close. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
+| 2026-06-21 | **WS bar-close loop liveness** (after S44 7-day-dead incident) | pm2 "online" does NOT mean the bar-close loop is alive — the S5 webhook server masks a dead WS. **Confirm bar-close logs are current**, not just that the process is up. Fix `bb3171e` should now self-heal (timeout → exit → pm2 restart), but verify it actually fired if an outage recurs. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 100 --nostream \| grep -iE 'Bar close\|S6-diag' \| tail -3"` — newest must be within ~15min of now |
+| 2026-06-10 | S6 LONG open + trailing SL | Entry $62,191 (0.00243 BTC, 8x). SL ratcheting (was $61,942 post-recovery). Watch for exit (EMA8/55 cross or BBWP cycle). Trailing was frozen Jun13–20 during the dead loop; resumed post-S44 restart. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
 | 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
-| 2026-05-31 | Balance drift | $340.47 cross margin + $37.47 position margin = $377.94 total. S6 unrealized +$19.40. Martin's manual trades likely source of earlier drift. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 5 --nostream \| grep Balance"` |
+| 2026-05-31 | Balance drift | Account value $381.22 (S43 SHORT +$19.93 compounded in). Bot bankroll hydrates $359.45. Martin's manual trades likely source of earlier drift. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 5 --nostream \| grep Balance"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Monitor S6 SHORT trade + trailing SL** | low | First bot trade LIVE. Entry $72,729, SL trailing at $64,093, unrealized +$19.40. Watch for exit (EMA8/55 cross or BBWP cycle). Trailing validated S43. |
-| 2 | **Post-trade analysis** | low | After S6 exits: review trade forensics, compare actual vs backtest behavior, decide on leverage increase from 1.0x. |
-| 3 | **Meta Signals summary → Martin** | low | S38 research done: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. Also confirm VPS manual trading + balance. |
-| 4 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
-| 5 | **S2 re-evaluation** | low | Disabled (S33). Code intact. Revisit if entry logic fundamentally reworked. |
-| 6 | **S3 re-evaluation** | low | Mean-reversion on BTC perps structurally unfavorable. Revisit if Martin fine-tunes StochRSI. |
-| 7 | **S7 re-evaluation** | low | Parked: backtest -$3 PnL with 8h Binance rates. Revisit if Hyperliquid historical funding available. |
+| 1 | **Verify S44 reconnect fix holds** | low | `bb3171e` deployed + running. Can't force a HL outage to test the timeout path live. Watch that the next real WS drop self-heals (timeout → reconnect retries → exit/pm2 restart if 10 fail). Check Watchlist row 1 each session. |
+| 2 | **Monitor S6 LONG + trailing SL** | low | Entry $62,191, SL ratcheting (was $61,942). Watch for exit (EMA8/55 cross or BBWP cycle). |
+| 3 | **Post-trade analysis (closed SHORT)** | low | Full data now: S6 SHORT +$19.93 / 6.95R, exit `ema_reverse_cross`. Compare actual vs backtest; decide on leverage increase from 1.0x. |
+| 4 | **Meta Signals summary → Martin** | low | S38 research done: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. Also confirm VPS manual trading + balance. |
+| 5 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
+| 6 | **S2 / S3 / S7 re-evaluation** | low | All parked. S2 disabled (S33), S3 structurally unfavorable, S7 backtest -$3. Revisit only on logic rework. |

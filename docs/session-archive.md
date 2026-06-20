@@ -5,6 +5,19 @@
 
 ---
 
+## What Was Done (Session 41) — Reconnect guard + data refresh
+
+### VPS Health Check (P0)
+Bot healthy, 25h uptime, ↺=37 (+1 from S40, normal WS reconnect). Balance $341.22. S1 blocked (Daily-EMA200=below). **S6 BBWP=3.6** (extreme low — full swing from 97.6 in S40). Compression counter working: `compress=0bars(ok)`, EMA21 flipping. S5 receiving medium cascade signals, correctly ignored. Supabase CHANNEL_ERROR auto-recovered.
+
+### WS Reconnect Concurrency Fix (P1)
+Investigated MaxListenersExceededWarning from S40. Root cause: **not** our candle consumer (Node 22 built-in WebSocket = EventTarget, no listener limit). Actual source: **Supabase Realtime** `@supabase/realtime-js` depends on `ws` (EventEmitter, default max 10); on CHANNEL_ERROR reconnects, `ws` close listeners accumulate. Fixed: (1) `candle-consumer.ts` added `reconnecting` guard flag with `try/finally`; (2) `main-headless.ts` set `EventEmitter.defaultMaxListeners = 20`. **Note (S44):** the `reconnecting` guard added here later caused the 7-day-dead deadlock — see S44. The guard was correct; it just needed timeouts on the awaits it gated.
+
+### Backtest Data Refresh (P2)
+Updated klines through May 31: 78,867 total rows, 27 files. Funding rates through May 31 (2,373 records). **Changes:** `9ac6569`
+
+---
+
 ## What Was Done (Session 40) — Trailing SL backtest + handoff trim
 
 ### VPS Health Check (P0)
