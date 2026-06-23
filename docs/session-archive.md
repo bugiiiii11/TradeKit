@@ -1,7 +1,13 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-40). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-42). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+---
+
+## What Was Done (Session 42) — Health check only
+
+S42: health check, no trade, S6 BBWP 17-21 oscillating (not breaking out yet), balance $358.38. No code work.
 
 ---
 

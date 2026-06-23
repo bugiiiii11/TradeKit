@@ -12,6 +12,28 @@
 
 ---
 
+## What Was Done (Session 45) — Health check + position reconciliation + post-trade forensics
+
+### WS liveness — S44 fix holding (Watchlist row 1, PASS)
+Bar-close loop **live and current** (last bar within ~2–7 min of check across the session). S6-diag logging every bar (BBWP cooled 98→87 over the session, EMA21=below/short). pm2 `trading-bot` online, 2D uptime (S44 patch restart), ↺=42. No real WS outage occurred, so the timeout-guard self-heal path still hasn't been exercised live — keep watching.
+
+### Open position reconciled — handoff was stale
+Handoff tracked an S6 LONG @ $62,191; Hyperliquid ground truth showed it **closed**, replaced by a new **S1 SHORT** -0.00301 BTC @ $62,637 (10x isolated, opened 2026-06-23 08:15Z). Confirmed S1 via clearinghouse 10x + `[Trailing] S1 short` log. uPnL drifted +$0.28 → +$0.67 over the session as BTC fell to ~$62,413. Trailing SL holding at $63,249 (ratchet-only, ~1% above entry — not yet locked-profit). Account value $377.5–377.9, bankroll $358.47.
+
+### Post-trade forensics (corrected ledger from Supabase `trades`)
+Raw fills misled an initial read; Supabase trade records are authoritative:
+- **S6 LONG** (Jun 10→21, 11d): 62191 → 63289, **+$2.67 / 4.41R**, exit `ema_reverse_cross` (strategy exit, *not* trailing SL). Survived the 7-day dead loop on a frozen static stop.
+- **S6 SHORT** (Jun 21→22, 1.7h): 63289 → 64680, **−$3.16 / −1.10R**, exit `native_sl`. Entirely between sessions, unlogged in S44.
+- **Net realized since S44: −$0.49.**
+
+### New reliability finding — trailing SL goes stale after restart/outage
+Forensics surfaced `[Trailing] Failed to modify SL: Cannot modify canceled or filled order` repeating every 15 min Jun 20 19:00–22:15. After the outage the S6 LONG's SL order ref was stale, so trailing was **non-functional on that position** until it exited. **Failed safely** (try/catch, no crash; `ema_reverse_cross` caught it at +$2.67), but a post-restart position can silently lose trailing protection. Added as Tier-0 watch. This is the known "modifyStopLoss failure" untested path manifesting live.
+
+### Docs
+Watchlist row 2 rewritten (S6 LONG → S1 SHORT), balance row updated, new trailing-stale watch added. Stray `bash.exe.stackdump` removed. Commits `cb8c590` (this session) pushed to main.
+
+---
+
 ## What Was Done (Session 44) — P0: WS loop dead 7 days (reconnect deadlock) — recovered + fixed
 
 ### VPS Deep Dive uncovered a silent P0 (was reported "healthy")
@@ -58,12 +80,6 @@ SL ratcheted $10,092 tighter. Position now locks in ~+$17 of +$19 gain. `modifyS
 
 ### Flash Restart Note
 OCI2 `pm2 restart all` triggered by Flash project deploy. Discord confirmed clean recovery: "1 position(s) restored from Hyperliquid", S1+S6 active, $399 bankroll. No TradeKit code/config changes.
-
----
-
-## What Was Done (Session 42) — Health check only
-
-S42: health check, no trade, S6 BBWP 17-21 oscillating (not breaking out yet), balance $358.38. No code work.
 
 ---
 
