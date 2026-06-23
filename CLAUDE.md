@@ -115,6 +115,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - Native TP trigger execution + partial fill cascade on Hyperliquid
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
 - Trailing SL breakeven mode with real open position (not yet exercised — only trailing mode validated S43)
+- **Trailing SL goes stale after restart/outage** (observed S45): post-restart the SL order ref can be canceled/filled, so `modifyStopLoss()` throws `Cannot modify canceled or filled order` and trailing silently stops working on that position until it re-places a stop. Fails safely (try/catch, no crash) but loses trailing protection. After any restart with an open position, verify trailing actually modifies the SL.
 
 **Operational:**
 - Hydration trade-log cross-check with real open position (deployed S32, validated S34+S37 — working correctly)
