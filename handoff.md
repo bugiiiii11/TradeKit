@@ -12,6 +12,32 @@
 
 ---
 
+## What Was Done (Session 46) — Trailing-stale bug fixed + deployed, manual profit floor
+
+### Deep dive caught the trailing-stale bug firing LIVE (Watchlist row 3 triggered)
+Two red herrings nearly derailed the health check, worth recording:
+1. **Local Windows clock was ~35h behind real time** — comparing the bot against it first showed a false "PASS", then a false "35h-dead-loop P0". The exchange is the only reliable clock: queried Hyperliquid's latest 15m candle → confirmed real time + that the **WS loop was actually alive and current** (contiguous bars Jun 22→25, no gap).
+2. **`pm2 logs --nostream` serves stale buffered lines** — it reported the newest bar as 35h old while the actual log *file* (`tail`) was current. **Read the log file directly, not via `pm2 logs --nostream`, for liveness.** The Watchlist row-1 command uses `--nostream`, so that watch can lie — updated below.
+
+Real finding: `[Trailing] Failed to modify SL for S1: Cannot modify canceled or filled order` firing **every bar, 88× in the current error log**, and mirrored to Discord every 15 min. Trailing was non-functional on the open S1 SHORT; its stop was frozen at $63,249 (above entry → protected nothing on a now-profitable short).
+
+### Root cause + fix B (committed `aa15560`, deployed to VPS)
+Hyperliquid **reassigns an order's oid on every `modify`**. `modifyStopLoss` used single `modify()` (which does *not* echo the new oid) and returned the *input* oid, so after the FIRST successful trail the bot tracked a dead oid forever. Same bug hit the S6 LONG in S45.
+- `orders.ts`: `modifyStopLoss` now uses **`batchModify`** (echoes new oid), returns it, and **self-heals** — if the tracked oid is stale it re-discovers the live reduce-only BTC stop and retries once (also covers restart-hydration staleness).
+- `main-headless.ts:665`: caller now persists the returned oid into `pos.stopOid`.
+- Type-checks clean. Restarted VPS bot (↺=43): position hydrated, WS subscribed, bar closes current. `batchModify` confirmed on box.
+
+### Manual profit floor (option A) — `move_s1_sl.ts`
+While the bot was still on old code, manually re-trailed the stuck S1 SHORT stop **$63,249 → $61,050** via a new one-off script (dry-run by default, hard-guarded to the VPS wallet, finds the live stop by querying the book). Locks ~+$4.78 profit (entry $62,637; BTC had fallen to ~$59,500, uPnL ~+$8.5). Atomic `modify`, position never naked. Stop oid now `479697922460`.
+
+### New latent bug found — hydration misclassifies a trailed-into-profit stop as a TP
+Hydration (`main-headless.ts:122`) classifies SL vs TP purely by trigger-price-vs-entry. The $61,050 stop is *below* entry (short trailed into profit), so on the post-fix restart the bot logged it as `SL=$62888 (estimated), 1 TP(s)` — `stopOid` undefined → **trailing skipped on this position** (harmless side effect: the Discord spam stops). Money is safe (the $61,050 order is a real SL trigger on the exchange regardless of the bot's label). Proper fix: classify by the order's `tpsl` field, not price. Added to Watchlist + Untested Code Paths.
+
+### Net state
+S1 SHORT rides a static $61,050 profit floor until it closes via strategy exit or stop. B works correctly for all *future* positions (normal above-entry stops hydrate + trail + capture oid). Account value ~$386, bankroll $358.47.
+
+---
+
 ## What Was Done (Session 45) — Health check + position reconciliation + post-trade forensics
 
 ### WS liveness — S44 fix holding (Watchlist row 1, PASS)
@@ -55,53 +81,27 @@ Account value $381.22 (S43's +$19.93 SHORT win compounded in). Bot bankroll hydr
 
 ---
 
-## What Was Done (Session 43) — First bot trade + trailing SL validated
-
-### VPS Deep Dive (P0)
-Bot healthy after Flash project pm2 restart (not TradeKit-related). ↺=40, 0 unstable restarts. Clean SIGINT + recovery, position hydrated correctly from trade-log.
-
-**S6 FIRST BOT TRADE:** SHORT @ $72,729, 0.00197 BTC, 8x isolated, entry 2026-06-01T08:30Z. Unrealized PnL +$19.40 (+108% ROE on $37.47 margin). BTC dropped ~13.5% since entry. SL was at $74,185 (2% above entry, 18% above current price).
-
-Portfolio stats (all-time): 34 trades (9 open incl. manual), S6: 8 trades +$1.44, 37.5% WR.
-
-### S6 Exit Logic Audit (P1)
-Verified `shouldExitS6()` is independent of:
-1. **EMA21 direction** — exit uses EMA8/EMA55 cross + BBWP cycle, not EMA21 (EMA21 only used for entry direction)
-2. **Compression state** — `compress=55bars(FAIL)` only blocks new entries, not exits
-3. **`modifyStopLoss()` failure** — try/catch in `checkTrailingStops()`, local state only updates after success
-
-### Trailing SL Activated (P2)
-Added `TRAILING_MODE=trailing` to VPS `.env`. Restarted bot. First bar close validated:
-```
-[Orders] Stop-loss modified: oid=451102111998 → new trigger $64092.7
-[Trailing] S6 short: SL moved $74185.0 → $64092.7 (trailing_updated)
-```
-SL ratcheted $10,092 tighter. Position now locks in ~+$17 of +$19 gain. `modifyStopLoss()` removed from Untested Code Paths in CLAUDE.md.
-
-### Flash Restart Note
-OCI2 `pm2 restart all` triggered by Flash project deploy. Discord confirmed clean recovery: "1 position(s) restored from Hyperliquid", S1+S6 active, $399 bankroll. No TradeKit code/config changes.
-
----
-
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-06-21 | **WS bar-close loop liveness** (after S44 7-day-dead incident) | pm2 "online" does NOT mean the bar-close loop is alive — the S5 webhook server masks a dead WS. **Confirm bar-close logs are current**, not just that the process is up. Fix `bb3171e` should now self-heal (timeout → exit → pm2 restart), but verify it actually fired if an outage recurs. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 100 --nostream \| grep -iE 'Bar close\|S6-diag' \| tail -3"` — newest must be within ~15min of now |
-| 2026-06-23 | S1 SHORT open + trailing SL | Entry $62,637 (0.00301 BTC, 10x isolated), opened 2026-06-23 08:15Z. uPnL ~+$0.29, trailing SL ratcheting down (was $63,249, from $64,512). Still ~1% above entry — stop-out here = small loss. Watch for exit. (Prior S6 LONG @ $62,191 closed Jun 21 +$2.67/4.41R `ema_reverse_cross`; an S6 short Jun 21–22 stopped out −$3.16 `native_sl` — both unlogged in S44.) | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 30 --nostream"` |
-| 2026-06-23 | Trailing SL goes stale after restart/outage | Forensics found `[Trailing] Failed to modify SL: Cannot modify canceled or filled order` repeating Jun 20 19:00–22:15 — after the outage the S6 LONG's SL order ref was stale, so trailing was non-functional on that position until it exited. Failed safely (try/catch, no crash, strategy exit caught it +$2.67), but a post-restart position can lose trailing protection silently. **After any restart with an open position, confirm trailing actually modifies the SL (not erroring).** | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 50 --nostream \| grep -i 'Failed to modify SL'"` — must return nothing |
-| 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 10 --nostream \| grep -i cascade"` |
-| 2026-05-31 | Balance drift | Account value ~$377.9 (S6 LONG +$2.67 win, then S6 short −$3.16 loss since S44; net −$0.49). Bot bankroll hydrates $358.47. Martin's manual trades likely source of earlier drift. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "pm2 logs trading-bot --lines 5 --nostream \| grep Balance"` |
+| 2026-06-21 | **WS bar-close loop liveness** (after S44 7-day-dead incident) | pm2 "online" does NOT mean the bar-close loop is alive — the S5 webhook masks a dead WS. **`pm2 logs --nostream` LIES (serves stale buffered lines, S46) — read the log FILE directly and cross-check the exchange clock.** Don't trust your local machine clock either (was 35h off in S46). Fix `bb3171e` self-heals (timeout → exit → pm2 restart); verify it fired if an outage recurs. | Liveness: `ssh … "tail -5 /home/ubuntu/.pm2/logs/trading-bot-out.log"` — newest "Bar close" must be within ~15min. Exchange clock: `curl -s -X POST https://api.hyperliquid.xyz/info -d '{"type":"candleSnapshot","req":{"coin":"BTC","interval":"15m","startTime":1750000000000,"endTime":1790000000000}}'` → last candle `T` = real time |
+| 2026-06-25 | S1 SHORT open — static $61,050 floor (not trailing) | Entry $62,637 (0.00301 BTC, 10x isolated), opened Jun 23 08:15Z. S46 manually set SL to $61,050 (oid `479697922460`, locks ~+$4.78). **Trailing is OFF on this position** — hydration misread the below-entry stop as a TP (`stopOid` undefined, see row below), so it won't ratchet further. Stop is a real exchange trigger; protection intact. Watch for exit (strategy `ema_reverse_cross` or the $61,050 stop). | `ssh … "tail -30 /home/ubuntu/.pm2/logs/trading-bot-out.log"` + `curl … openOrders` for the resting stop |
+| 2026-06-25 | **Hydration misclassifies a trailed-into-profit stop as a TP** (found S46) | `main-headless.ts:122` classifies SL vs TP by trigger-price-vs-entry. A stop trailed past entry (below entry for a short / above for a long) is read as a TP on restart → `stopOid` undefined → trailing skipped for that position. Money is safe (real SL trigger stays on the book), but trailing silently stops. **Real fix: classify by the order's `tpsl` field, not price.** | On any restart with an open profitable position, check the hydration log line — if it says `SL=$… (estimated), N TP(s)` and you placed no TP, the stop was misread. |
+| 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "tail -200 /home/ubuntu/.pm2/logs/trading-bot-out.log \| grep -i cascade \| tail"` |
+| 2026-05-31 | Balance drift | Account value ~$386 (S1 SHORT uPnL ~+$8.5 unrealized; realized net −$3.16 since S44). Bot bankroll hydrates $358.47. Martin's manual trades likely source of earlier drift. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "tail -5 /home/ubuntu/.pm2/logs/trading-bot-out.log \| grep Balance"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Verify S44 reconnect fix holds** | low | `bb3171e` deployed + running. Can't force a HL outage to test the timeout path live. Watch that the next real WS drop self-heals (timeout → reconnect retries → exit/pm2 restart if 10 fail). Check Watchlist row 1 each session. |
-| 2 | **Monitor S1 SHORT + trailing SL** | low | Entry $62,637 (0.00301 BTC, 10x), opened Jun 23. Trailing SL $63,249 (ratchet-only, still ~1% above entry). Watch for exit / SL ratchet into profit. |
-| 3 | **Leverage decision (still 1.0x)** | low | Post-trade analysis done (S45). Ledger: S6 LONG +$2.67/4.41R `ema_reverse_cross`, S6 SHORT −$3.16 `native_sl`, S43 SHORT +$19.93/6.95R. Small sample (mixed). Decide whether to bump from 1.0x — likely needs more closed trades first. |
-| 4 | **Meta Signals summary → Martin** | low | S38 research done: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. Also confirm VPS manual trading + balance. |
-| 5 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
-| 6 | **S2 / S3 / S7 re-evaluation** | low | All parked. S2 disabled (S33), S3 structurally unfavorable, S7 backtest -$3. Revisit only on logic rework. |
+| 1 | **Verify B fix (oid capture) on next trade** | low | `aa15560` deployed. The CURRENT S1 SHORT won't trail (hydration quirk), so the fix proves out on the *next* position with a normal above-entry stop: confirm `[Orders] Stop-loss modified: oid=X → Y` (new oid Y differs) and NO `Failed to modify SL`. Self-heal also covers stale refs. |
+| 2 | **Fix hydration SL/TP misclassification** | med | `main-headless.ts:122` — classify by the order's `tpsl` field, not trigger-price-vs-entry, so a stop trailed into profit isn't read as a TP on restart (Watchlist row 3). Until fixed, any restart with a profitable position loses trailing on it. |
+| 3 | **Monitor S1 SHORT to exit** | low | Static $61,050 floor (oid `479697922460`), entry $62,637, won't trail further. Watch for `ema_reverse_cross` exit or stop. |
+| 4 | **Verify S44 reconnect fix holds** | low | `bb3171e` running. Can't force a HL outage. Watch next real WS drop self-heals (timeout → retries → exit/pm2 restart if 10 fail). Watchlist row 1. |
+| 5 | **Leverage decision (still 1.0x)** | low | Ledger small/mixed: S6 LONG +$2.67/4.41R, S6 SHORT −$3.16, S43 SHORT +$19.93/6.95R. Likely needs more closed trades before bumping. |
+| 6 | **Meta Signals summary → Martin** | low | S38: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. Confirm VPS manual trading + balance. |
+| 7 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
+| 8 | **S2 / S3 / S7 re-evaluation** | low | All parked. S2 disabled (S33), S3 structurally unfavorable, S7 backtest -$3. Revisit only on logic rework. |

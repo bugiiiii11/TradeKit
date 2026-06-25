@@ -89,6 +89,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 | `test_webhook.ts` | S5 webhook server integration tests (15 cases) |
 | `investigate_balance.ts` | Query Hyperliquid API for fills, funding, ledger events (read-only, any wallet) |
 | `migrate_source_columns.ts` | Add source/target columns for two-bot architecture |
+| `move_s1_sl.ts` | One-off: manually re-trail the live BTC stop (dry-run default, VPS-wallet-guarded). Run ON the VPS: `--price <N> [--confirm]` |
 
 ## Conventions
 
@@ -98,6 +99,8 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **Supabase keys:** new format (`sb_publishable_...` / `sb_secret_...`). Legacy JWTs fully disabled.
 - **Command bus pattern:** frontend inserts `bot_commands` row → Supabase Realtime → bot claims atomically (`UPDATE WHERE status='pending'`) → executes → writes result back
 - **DRY_RUN gate:** `src/main.ts` skips order placement when `DRY_RUN=true`
+- **Hyperliquid reassigns the order oid on every `modify`.** Single `modify()` does NOT echo the new oid; use **`batchModify`** (returns it via `statuses[].resting.oid`) and persist the new oid, or the next modify hits "Cannot modify canceled or filled order" (S46 trailing-stale bug).
+- **`pm2 logs --nostream` serves stale buffered lines** — for log liveness read the log FILE (`tail .pm2/logs/trading-bot-out.log`), and use the Hyperliquid latest-candle timestamp as the real clock (don't trust the local machine clock).
 - **Margin sizing:** 5% of bankroll as margin, leverage applied on top. Portfolio compounds each trade.
 - **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S6` on VPS (S2 disabled Session 33).
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
@@ -115,7 +118,8 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - Native TP trigger execution + partial fill cascade on Hyperliquid
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
 - Trailing SL breakeven mode with real open position (not yet exercised — only trailing mode validated S43)
-- **Trailing SL goes stale after restart/outage** (observed S45): post-restart the SL order ref can be canceled/filled, so `modifyStopLoss()` throws `Cannot modify canceled or filled order` and trailing silently stops working on that position until it re-places a stop. Fails safely (try/catch, no crash) but loses trailing protection. After any restart with an open position, verify trailing actually modifies the SL.
+- ~~Trailing SL goes stale after restart/outage~~ **FIXED S46 (`aa15560`):** root cause was Hyperliquid reassigning the order oid on every `modify`; `modifyStopLoss` now uses `batchModify` (echoes new oid), returns it, and self-heals stale refs by re-discovering the live stop. Caller persists the returned oid. Validates on the next trade with a normal above-entry stop.
+- **Hydration misclassifies a trailed-into-profit stop as a TP** (found S46): `main-headless.ts:122` classifies SL vs TP by trigger-price-vs-entry. A stop trailed past entry is read as a TP on restart → `stopOid` undefined → trailing skipped for that position (money safe, real SL trigger stays on book). Fix: classify by the order's `tpsl` field, not price.
 
 **Operational:**
 - Hydration trade-log cross-check with real open position (deployed S32, validated S34+S37 — working correctly)

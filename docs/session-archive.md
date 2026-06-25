@@ -1,7 +1,35 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-42). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-43). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+---
+
+## What Was Done (Session 43) — First bot trade + trailing SL validated
+
+### VPS Deep Dive (P0)
+Bot healthy after Flash project pm2 restart (not TradeKit-related). ↺=40, 0 unstable restarts. Clean SIGINT + recovery, position hydrated correctly from trade-log.
+
+**S6 FIRST BOT TRADE:** SHORT @ $72,729, 0.00197 BTC, 8x isolated, entry 2026-06-01T08:30Z. Unrealized PnL +$19.40 (+108% ROE on $37.47 margin). BTC dropped ~13.5% since entry. SL was at $74,185 (2% above entry, 18% above current price).
+
+Portfolio stats (all-time): 34 trades (9 open incl. manual), S6: 8 trades +$1.44, 37.5% WR.
+
+### S6 Exit Logic Audit (P1)
+Verified `shouldExitS6()` is independent of:
+1. **EMA21 direction** — exit uses EMA8/EMA55 cross + BBWP cycle, not EMA21 (EMA21 only used for entry direction)
+2. **Compression state** — `compress=55bars(FAIL)` only blocks new entries, not exits
+3. **`modifyStopLoss()` failure** — try/catch in `checkTrailingStops()`, local state only updates after success
+
+### Trailing SL Activated (P2)
+Added `TRAILING_MODE=trailing` to VPS `.env`. Restarted bot. First bar close validated:
+```
+[Orders] Stop-loss modified: oid=451102111998 → new trigger $64092.7
+[Trailing] S6 short: SL moved $74185.0 → $64092.7 (trailing_updated)
+```
+SL ratcheted $10,092 tighter. Position now locks in ~+$17 of +$19 gain. `modifyStopLoss()` removed from Untested Code Paths in CLAUDE.md.
+
+### Flash Restart Note
+OCI2 `pm2 restart all` triggered by Flash project deploy. Discord confirmed clean recovery: "1 position(s) restored from Hyperliquid", S1+S6 active, $399 bankroll. No TradeKit code/config changes.
 
 ---
 
