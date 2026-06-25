@@ -659,9 +659,10 @@ async function checkTrailingStops(markPrice: number): Promise<void> {
     if (!result.shouldMove || result.newStopPrice === null) continue;
 
     try {
-      await modifyStopLoss(pos.stopOid, pos.direction, result.newStopPrice, pos.sizeBase);
+      const newStopOid = await modifyStopLoss(pos.stopOid, pos.direction, result.newStopPrice, pos.sizeBase);
       const oldStop = pos.stopPrice;
       pos.stopPrice = result.newStopPrice;
+      pos.stopOid = newStopOid; // Hyperliquid reassigns oid on modify — persist it or the next trail fails
       if (pos.trailingMode === "breakeven") pos.breakevenApplied = true;
 
       console.log(

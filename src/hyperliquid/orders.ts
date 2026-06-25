@@ -441,9 +441,33 @@ export async function setStopLoss(
 }
 
 /**
+ * Finds the single live reduce-only BTC stop on the book, returning its oid.
+ * Returns null if there isn't exactly one (zero, or ambiguous) so callers
+ * never guess which order to touch. Uses the same reduce-only-BTC convention
+ * as cancelOpenBtcStops (this bot does not rest TP orders for trailed trades).
+ */
+async function findLiveBtcStopOid(): Promise<number | null> {
+  const ctx = await getHyperliquidContext();
+  const open = await ctx.info.openOrders({ user: ctx.masterAddress });
+  const stops = open.filter(
+    (o: { coin?: string; reduceOnly?: boolean }) => o.coin === "BTC" && o.reduceOnly === true
+  );
+  return stops.length === 1 ? (stops[0] as { oid: number }).oid : null;
+}
+
+/**
  * Modifies an existing stop-loss trigger order's price (used by trailing stop).
  * Keeps all other order params (size, reduce-only, tpsl=sl) unchanged.
- * Returns the new OID (Hyperliquid may reassign on modify).
+ *
+ * Returns the NEW oid. Hyperliquid reassigns the oid on every modify, so we use
+ * `batchModify` (which echoes the new oid in its response, unlike `modify`) and
+ * return it. Callers MUST persist the returned oid — otherwise the next modify
+ * targets a canceled order and fails with "Cannot modify canceled or filled
+ * order" forever (the S45/S46 trailing-stale bug).
+ *
+ * Self-heal: if the tracked oid is already stale (reassigned by a prior modify,
+ * or not recovered after a restart/hydration), the first batchModify throws.
+ * We then re-discover the live stop on the book and retry against it once.
  */
 export async function modifyStopLoss(
   oid: string,
@@ -454,24 +478,49 @@ export async function modifyStopLoss(
   const ctx = await getHyperliquidContext();
   const closeIsLong = direction === "short";
 
-  await ctx.exchange.modify({
-    oid: parseInt(oid, 10),
-    order: {
-      a: ctx.btcAssetIndex,
-      b: closeIsLong,
-      p: roundPrice(newStopPrice, ctx.btcSzDecimals),
-      s: roundSize(sizeBase, ctx.btcSzDecimals),
-      r: true,
-      t: {
-        trigger: {
-          isMarket: true,
-          triggerPx: roundPrice(newStopPrice, ctx.btcSzDecimals),
-          tpsl: "sl" as const,
-        },
+  const orderParams = {
+    a: ctx.btcAssetIndex,
+    b: closeIsLong,
+    p: roundPrice(newStopPrice, ctx.btcSzDecimals),
+    s: roundSize(sizeBase, ctx.btcSzDecimals),
+    r: true,
+    t: {
+      trigger: {
+        isMarket: true,
+        triggerPx: roundPrice(newStopPrice, ctx.btcSzDecimals),
+        tpsl: "sl" as const,
       },
     },
-  });
+  };
 
-  console.log(`[Orders] Stop-loss modified: oid=${oid} → new trigger $${newStopPrice.toFixed(1)}`);
-  return oid;
+  const runModify = async (targetOid: number): Promise<string> => {
+    const result = await ctx.exchange.batchModify({
+      modifies: [{ oid: targetOid, order: orderParams }],
+    });
+    const status = result.response.data.statuses[0];
+    if ("error" in status) {
+      throw new Error(`[Orders] Stop-loss modify rejected: ${status.error}`);
+    }
+    return "resting" in status
+      ? String(status.resting.oid)
+      : "filled" in status
+      ? String(status.filled.oid)
+      : String(targetOid);
+  };
+
+  try {
+    const newOid = await runModify(parseInt(oid, 10));
+    console.log(`[Orders] Stop-loss modified: oid=${oid} → ${newOid} @ trigger $${newStopPrice.toFixed(1)}`);
+    return newOid;
+  } catch (err) {
+    // Tracked oid is stale — re-discover the live stop and retry once.
+    const liveOid = await findLiveBtcStopOid();
+    if (liveOid === null || String(liveOid) === oid) throw err;
+    const newOid = await runModify(liveOid);
+    console.log(
+      `[Orders] Stop-loss modified via re-discovered oid ${liveOid} ` +
+        `(tracked ${oid} was stale) → ${newOid} @ trigger $${newStopPrice.toFixed(1)}`
+    );
+    return newOid;
+  }
 }
