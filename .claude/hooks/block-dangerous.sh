@@ -28,13 +28,31 @@ BLOCKED_PATTERNS=(
   'eval.*\$\(curl'
 )
 
-# === Blockchain / Railway project-specific patterns ===
-# Railway auto-deploys on push -- force-pushing main/master could corrupt prod
+# === Repo-integrity guard ===
+# TradeKit commits directly to main (no review gate); force-pushing main/master
+# would rewrite shared history. Block it.
 BLOCKED_PATTERNS+=(
   'git push.*--force.*main'
   'git push.*--force.*master'
   'git push.*-f.*main'
   'git push.*-f.*master'
+)
+
+# === TradeKit secret-exfil guards ===
+# .env and the wallet/service-role keys must never be read, printed, or
+# committed via Bash. protect-files.sh only covers Edit/Write, not reads/exfil.
+# .env.example / .sample / .template are intentionally NOT blocked. source/.
+# loads (used by the bot at runtime) are intentionally NOT blocked.
+BLOCKED_PATTERNS+=(
+  # Reading the live .env (and per-environment variants; templates excluded)
+  '(cat|less|more|head|tail|nl|xxd|od|strings)[[:space:]].*\.env($|[[:space:]]|"|'"'"'|\.local|\.production|\.development|\.staging|\.test)'
+  # Printing secret env vars by name
+  '(echo|printf|printenv).*(PRIVATE_KEY|SERVICE_ROLE_KEY|S5_WEBHOOK_SECRET)'
+  # Dumping the whole environment (bare, or piped into grep to sift keys)
+  '(^|[[:space:]])printenv[[:space:]]*$'
+  '(^|[[:space:]])(printenv|env)[[:space:]]*\|[[:space:]]*grep'
+  # Staging the .env for commit
+  'git[[:space:]]+add[[:space:]].*\.env($|[[:space:]]|"|'"'"'|\.local|\.production|\.development|\.staging|\.test)'
 )
 
 for pattern in "${BLOCKED_PATTERNS[@]}"; do
