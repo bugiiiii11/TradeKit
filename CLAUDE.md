@@ -146,7 +146,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **tradingview-mcp** — child process of desktop bot, dies with bot
 - **Supabase Realtime** — bot holds WebSocket channel for `bot_commands` INSERT events
 - **Vercel** — `trade-kit.vercel.app`, auto-deploys on push to `main`
-- **Safety hooks** — `protect-files.sh` active (blocks `.env*` edits). Others need `jq` (`winget install jqlang.jq`).
+- **Safety hooks** — all 5 active and wired in `.claude/settings.json` (`jq` installed). `protect-files.sh` blocks Edit/Write to secret files; `block-dangerous.sh` blocks destructive Bash + force-push-to-main + Bash-level `.env`/key reads/exfil (S47); `block-internal-urls.sh` (SSRF), `audit-all.sh` + `scan-injection.sh` (PostToolUse, log to global `~/.claude/safety-audit.jsonl`). Native `deny` list (jq-independent) also blocks `rm -rf`, force-push, `cat .env`, `git add .env`.
 
 ## Security Rules
 
