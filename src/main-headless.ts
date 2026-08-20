@@ -119,12 +119,11 @@ async function hydrateActivePositions(): Promise<void> {
     const closeSide: "B" | "A" = pos.direction === "long" ? "A" : "B";
     const posOrders = triggerOrders.filter(o => o.side === closeSide);
 
-    const slOrder = posOrders.find(o =>
-      pos.direction === "long" ? o.triggerPx < pos.entryPrice : o.triggerPx > pos.entryPrice
-    );
-    const tpOrders = posOrders.filter(o =>
-      pos.direction === "long" ? o.triggerPx > pos.entryPrice : o.triggerPx < pos.entryPrice
-    );
+    // Classify by order type, NOT trigger-price-vs-entry: a stop trailed into
+    // profit sits on the TP side of entry and was misread as a TP on restart,
+    // silently disabling trailing for the position (S46 finding).
+    const slOrder = posOrders.find(o => o.isStopLoss);
+    const tpOrders = posOrders.filter(o => !o.isStopLoss);
 
     const stopPrice = slOrder?.triggerPx ?? pos.entryPrice * (pos.direction === "long" ? 0.996 : 1.004);
     const stopDistancePct = Math.abs(pos.entryPrice - stopPrice) / pos.entryPrice;

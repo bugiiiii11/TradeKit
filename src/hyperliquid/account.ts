@@ -26,6 +26,10 @@ export interface TriggerOrderInfo {
   side: "B" | "A";
   triggerPx: number;
   sz: number;
+  /** True for "Stop Market"/"Stop Limit" orders, false for "Take Profit …".
+   *  A stop trailed into profit sits on the TP side of entry, so trigger-price
+   *  position cannot distinguish SL from TP — only the order type can. */
+  isStopLoss: boolean;
 }
 
 /**
@@ -128,5 +132,6 @@ export async function getOpenBtcTriggerOrders(): Promise<TriggerOrderInfo[]> {
       side: o.side,
       triggerPx: parseFloat(o.triggerPx),
       sz: parseFloat(o.sz),
+      isStopLoss: o.orderType.startsWith("Stop"),
     }));
 }

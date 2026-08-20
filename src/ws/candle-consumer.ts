@@ -34,6 +34,11 @@ const MS_15M = 15 * 60_000;
 // while pm2 still reports "online" (Jun 13 2026 incident — 7 days dead).
 const SUBSCRIBE_TIMEOUT_MS = 20_000;
 const GAP_FILL_TIMEOUT_MS = 20_000;
+// Watchdog: if `reconnecting` has been true this long, some await inside the
+// (re)connect path hung despite the per-call timeouts (Jun 27 2026 incident —
+// the error-path dispose in subscribe() hung, 54 days dead). Exit and let pm2
+// restart with a clean warmup rather than trusting any in-process recovery.
+const RECONNECT_WATCHDOG_MS = 180_000;
 
 /** Rejects if the wrapped promise does not settle within `ms`. */
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -102,6 +107,7 @@ export class CandleConsumer {
   private running = false;
   private reconnectAttempts = 0;
   private reconnecting = false;
+  private reconnectingSince = 0;
 
   constructor(config: CandleConsumerConfig) {
     this.config = config;
@@ -175,7 +181,9 @@ export class CandleConsumer {
         "[WS] subscribe",
       );
     } catch (err) {
-      try { await transport[Symbol.asyncDispose](); } catch { /* ignore */ }
+      // Timeout-guarded: disposing a half-open socket during an exchange outage
+      // can hang forever (this exact line, unguarded, killed the loop Jun 27 2026).
+      try { await withTimeout(transport[Symbol.asyncDispose](), SUBSCRIBE_TIMEOUT_MS, "[WS] dispose-on-error"); } catch { /* ignore */ }
       throw err;
     }
 
@@ -284,7 +292,19 @@ export class CandleConsumer {
 
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(async () => {
-      if (!this.running || this.reconnecting) return;
+      if (!this.running) return;
+
+      if (this.reconnecting) {
+        // Watchdog: setInterval keeps firing even if a previous callback's
+        // `await this.reconnect()` never settles, so a hung reconnect cannot
+        // silence this check the way it silences everything else.
+        const stuckFor = Date.now() - this.reconnectingSince;
+        if (stuckFor > RECONNECT_WATCHDOG_MS) {
+          console.error(`[WS] Reconnect stuck for ${(stuckFor / 1000).toFixed(0)}s — exiting for pm2 restart`);
+          process.exit(1);
+        }
+        return;
+      }
 
       const staleDuration = Date.now() - this.lastMessageTime;
       if (staleDuration > STALE_TIMEOUT_MS) {
@@ -304,6 +324,7 @@ export class CandleConsumer {
   private async reconnect(): Promise<void> {
     if (this.reconnecting) return;
     this.reconnecting = true;
+    this.reconnectingSince = Date.now();
     try {
       // Tear down old subscription. Timeout-guarded: disposing a dead socket can
       // itself hang, which would re-introduce the pinned-`reconnecting` deadlock.

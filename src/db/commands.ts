@@ -57,6 +57,38 @@ const HANDLERS: Record<string, Handler> = {
 let _channel: RealtimeChannel | null = null;
 let _lastRealtimeStatus: string | null = null;
 let _realtimeErrorCount = 0;
+let _stopped = false;
+let _resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+
+const RESUBSCRIBE_DELAY_MS = 30_000;
+
+/**
+ * A CLOSED channel never comes back on its own (Jun 28 2026: channel closed
+ * and the kill switch was dead for 7+ weeks). Tear down and re-run the full
+ * startCommandSubscription — the startup sweep also catches any commands that
+ * arrived while the channel was down, and the claim pattern makes re-sweeping
+ * safe.
+ */
+function scheduleResubscribe(ctx: CommandHandlerContext, botSource?: string): void {
+  if (_stopped || _resubscribeTimer) return;
+  _resubscribeTimer = setTimeout(async () => {
+    _resubscribeTimer = null;
+    if (_stopped) return;
+    const supabase = getSupabase();
+    if (supabase && _channel) {
+      try { await supabase.removeChannel(_channel); } catch { /* ignore */ }
+    }
+    _channel = null;
+    _lastRealtimeStatus = null;
+    console.log("[Commands] Resubscribing to command channel...");
+    try {
+      await startCommandSubscription(ctx, botSource);
+    } catch (err) {
+      console.error("[Commands] Resubscribe failed — will retry:", err);
+      scheduleResubscribe(ctx, botSource);
+    }
+  }, RESUBSCRIBE_DELAY_MS);
+}
 
 /**
  * Starts the command subscription. Idempotent — a second call is a no-op.
@@ -146,7 +178,10 @@ export async function startCommandSubscription(
         }
         _lastRealtimeStatus = status;
       } else if (status === "CLOSED") {
-        console.warn("[Commands] Realtime subscription closed");
+        if (!_stopped) {
+          console.warn(`[Commands] Realtime subscription closed — resubscribing in ${RESUBSCRIBE_DELAY_MS / 1000}s`);
+          scheduleResubscribe(ctx, botSource);
+        }
         _lastRealtimeStatus = status;
       }
     });
@@ -157,6 +192,11 @@ export async function startCommandSubscription(
  * shutdown so the Realtime channel doesn't linger.
  */
 export async function stopCommandSubscription(): Promise<void> {
+  _stopped = true;
+  if (_resubscribeTimer) {
+    clearTimeout(_resubscribeTimer);
+    _resubscribeTimer = null;
+  }
   if (!_channel) return;
   const supabase = getSupabase();
   if (supabase) {
