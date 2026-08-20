@@ -104,6 +104,12 @@ interface ActivePosition {
 
 const activePositions: ActivePosition[] = [];
 
+/** Wall-clock time of the last bar-close evaluation. Surfaced in the status
+ *  digest so a dead WS loop is visible in Discord (S48: the digest reported
+ *  "ACTIVE" every 2h for 54 days while the loop was dead). */
+let lastBarCloseAt = 0;
+const BAR_CLOSE_STALE_MS = 30 * 60_000;
+
 async function hydrateActivePositions(): Promise<void> {
   const livePositions = await getOpenPositions();
   const btcPositions = livePositions.filter(p => p.coin === "BTC" && p.sizeBase > 0);
@@ -208,6 +214,7 @@ async function onBarClose(snapshots: {
   snap1D: IndicatorSnapshot;
 }): Promise<void> {
   const { snap15m, snap1H, snap4H, snap1D } = snapshots;
+  lastBarCloseAt = Date.now();
   console.log(`\n[Bot-VPS] ===== Bar close ${snap15m.timestamp} =====`);
 
   try {
@@ -861,8 +868,12 @@ function scheduleDailyDigest(): void {
       const balance = await getBalance();
       const s = getState();
       const positions = activePositions.length;
+      const barAgeMs = lastBarCloseAt > 0 ? Date.now() - lastBarCloseAt : -1;
+      const barAge = barAgeMs < 0 ? "never" : `${(barAgeMs / 60_000).toFixed(0)}min ago`;
+      const barFlag = barAgeMs < 0 || barAgeMs > BAR_CLOSE_STALE_MS ? "⚠️ WS LOOP STALE" : "✓";
       const lines = [
         "Status Digest",
+        `Last bar close: ${barAge} ${barFlag}`,
         `Balance: $${balance.toFixed(2)}`,
         `Daily PnL: ${s.dailyPnl >= 0 ? "+" : ""}$${s.dailyPnl.toFixed(2)}`,
         `Weekly PnL: ${s.weeklyPnl >= 0 ? "+" : ""}$${s.weeklyPnl.toFixed(2)}`,
@@ -878,6 +889,9 @@ function scheduleDailyDigest(): void {
         resetCascadeHeartbeatCount();
       }
       sendDiscord("status", lines.join("\n"), Colors.blue);
+      if (barFlag !== "✓") {
+        sendDiscord("errors", `⚠️ WS bar-close loop STALE — last bar close ${barAge}. Check pm2 + VPS.`, Colors.red);
+      }
     } catch (err) {
       console.error("[Bot-VPS] Digest error:", err);
     }
