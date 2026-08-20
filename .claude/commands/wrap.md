@@ -68,3 +68,10 @@ If unsure, ask: "Should I save this to CLAUDE.md (shared with your colleague) or
 - If everything is clean and up to date, just say "All wrapped. Nothing to do." and stop
 - Keep it brief -- don't over-explain
 - This skill can be called multiple times safely (idempotent)
+
+## After wrapping (optional handover check)
+
+Once the session is wrapped, suggest the crosscheck ritual in one line: "Open the
+next session, run `/start`, paste its briefing back here with `/crosscheck` and
+I'll verify the handover landed." Don't run it yourself -- it needs the new
+session's briefing as input.

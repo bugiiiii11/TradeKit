@@ -169,3 +169,4 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 
 1. Open a new Claude Code chat
 2. Type `/start` — reads handoff.md + checks environment + presents session briefing
+3. Optional: paste that briefing back into the OLD session with `/crosscheck` — the context-rich side verifies the handover and emits a paste-ready sync addendum for anything that leaked
