@@ -12,6 +12,40 @@
 
 ---
 
+## What Was Done (Session 48) — P0 again: WS loop dead 54 days (S44 fix had one hole) — recovered, hardened, made visible
+
+*(Session 47 was hooks-only: `d772f58` Bash-level secret-exfil guards + native deny list, `95295f3` CLAUDE.md refresh. No bot changes.)*
+
+### Deep dive: bot silently dead since 2026-06-27 08:34 UTC (2 days after the S46 restart)
+pm2: online, 55D uptime, ↺=43 (unchanged since S46) — looked healthy. Log file: only webhook lines, zero `Bar close`, error log empty since Jun 29. All pm2 log history before Aug 17 destroyed by `pm2-logrotate retain=3`; forensics reconstructed from Supabase `bot_logs`:
+- `08:30:00` last good bar close → `08:34:08` `[WS] No message in 68s — reconnect attempt 1/10` (Hyperliquid 502) → teardown took exactly 20s (S44 timeouts *worked*) → gap-fill 502 → `08:34:28` `[WS] Connecting to Hyperliquid WebSocket...` → **silence for 54 days.** No attempt 2/10, no timeout error, no `process.exit`.
+- Collateral: Supabase Realtime command channel `closed` on Jun 28 and never resubscribed — frontend kill switch was dead too.
+- The 2h Status Digest posted `Status: ACTIVE` to Discord the entire time (it had no bar-close info).
+
+**Root cause:** [candle-consumer.ts:178](src/ws/candle-consumer.ts#L178) — the *error-path* `await transport[Symbol.asyncDispose]()` inside `subscribe()` was the one network await S44 did not wrap in `withTimeout`. Subscribe timed out → catch → dispose of a half-open socket hung forever → `subscribe()` never threw → `reconnect()` never reached `finally` → `reconnecting` pinned `true` → heartbeat silently returned forever. Identical deadlock class to S44, one level deeper.
+
+### Fixes (`dbbe9c6`, deployed + verified live)
+1. **Guarded the error-path dispose** with `withTimeout` (the direct bug).
+2. **Reconnect watchdog** — heartbeat tracks `reconnectingSince`; if `reconnecting` has been true > 3 min, `process.exit(1)` → pm2 restart → clean warmup. `setInterval` keeps firing even when a prior callback's await never settles, so no future hang anywhere in the (re)connect path can silence it. Ends the whack-a-mole class.
+3. **Hydration SL/TP classification by order type** — `TriggerOrderInfo.isStopLoss` from `frontendOpenOrders().orderType` (`"Stop Market"` vs `"Take Profit Market"`), replacing trigger-price-vs-entry in [main-headless.ts](src/main-headless.ts). A stop trailed into profit now hydrates as the SL and keeps trailing (S46 Watchlist row 3 closed).
+4. **Command channel auto-resubscribe** on `CLOSED` (30s backoff, `_stopped` guard so SIGTERM shutdown doesn't loop).
+
+Restart: warmup clean, WS subscribed, live `[WS] Bar closed` confirmed against the exchange clock. ~19h later still current.
+
+### Visibility layer (`44baa34`) — never again blind
+- **`deploy/deadman-check.cjs`** — cron on the VPS (every 15 min, *outside* pm2/the bot process) reads the newest `[WS] Bar closed` row from Supabase `bot_logs`; >35 min old → Discord `#errors` alert, re-alert every 2h, recovery notice. State file `~/.tradekit-deadman.json`. Log: `~/.pm2/logs/deadman.log`. Tested end-to-end (forced alert + recovery posted).
+- **Status digest** now leads with `Last bar close: Nmin ago` and mirrors a red alert to `#errors` when >30 min.
+- **`pm2-logrotate retain` 3 → 30** so the next forensics don't depend on Supabase.
+
+### VPS is now a clean git checkout
+Deploys were scp-over-`bb3171e` (git log lied about the running version). Converted: backed up live `trades/trade_log.json` (667 lines; upstream stub is 1 line) to `~/trade_log.backup.20260820-195526.json`, `git checkout -- src/`, `git pull --ff-only` → `44baa34`, restored ledger byte-identical, `git update-index --skip-worktree trades/trade_log.json`. Content diff before conversion confirmed the running files matched the commits exactly. **Future deploys: `git pull` on the box, then `pm2 restart trading-bot`.**
+
+### Money
+- S1 SHORT closed **2026-07-01** via the S46 manual $61,050 stop (oid `479697922460`), filled $61,220 → **+$4.27 realized**. Last fill on the account.
+- Flat since. Account value **$381.56**, all withdrawable; reconciles to the cent with prior ledger. Zero $ lost to the outage — but every S1/S6 signal Jun 27 → Aug 20 was skipped while BTC moved ~$62k → ~$69k.
+
+---
+
 ## What Was Done (Session 46) — Trailing-stale bug fixed + deployed, manual profit floor
 
 ### Deep dive caught the trailing-stale bug firing LIVE (Watchlist row 3 triggered)
@@ -60,48 +94,25 @@ Watchlist row 2 rewritten (S6 LONG → S1 SHORT), balance row updated, new trail
 
 ---
 
-## What Was Done (Session 44) — P0: WS loop dead 7 days (reconnect deadlock) — recovered + fixed
-
-### VPS Deep Dive uncovered a silent P0 (was reported "healthy")
-pm2 showed `trading-bot` online, 10D uptime, ↺=40, error log empty since Jun 16 — **looked healthy**. It was not. On-chain + Supabase forensics revealed the **15m WebSocket bar-close loop had been dead since 2026-06-13 09:02** while the process stayed "online" (only the S5 cascade webhook HTTP server kept logging, masking it).
-
-**Timeline (Jun 13):** `09:00` last good bar close → `09:01:46` `[WS] No message in 66s — reconnect attempt 1/10` (Hyperliquid 502 outage) → `09:02:09` Digest error HTTP 502 → **then nothing for 7 days.** No "attempt 2/10", no bar closes, no trailing updates, no exits, no entries.
-
-**Root cause:** `reconnect()` sets `reconnecting=true` then `await subsClient.candle()`, which **hung without settling** during the outage. The `finally` that clears `reconnecting` never ran; the heartbeat guard `if (this.reconnecting) return` then suppressed every future reconnect. Flag pinned `true` forever → process never crashed → self-heal (`MAX_RECONNECT_ATTEMPTS → process.exit(1)`) never triggered. The S41 reconnect guard introduced this deadlock class (correct guard, but its gated awaits had no timeout).
-
-**Fix (`bb3171e`, deployed to VPS):** added `withTimeout()` around **every** network await in `subscribe()`/`reconnect()` — subscribe (20s), REST gap-fill (20s), unsubscribe, dispose. On timeout the await rejects → `finally` clears `reconnecting` → next heartbeat retries → eventually `process.exit(1)` → pm2 restart. Type-checks clean. Bot restarted twice (recover, then patched), both clean: position hydrated from trade-log, WS subscribed, bar closes flowing.
-
-### Trade forensics (the two S43 follow-ups)
-- **S43 SHORT closed a WIN:** S6, entry $72,729 → exit $62,613, **+$19.93 / 6.95R**, exit reason `ema_reverse_cross` (strategy exit fired, *not* the stop — trailing rode alongside). Closed 2026-06-09 13:00.
-- **New open position is also S6:** BBWP breakout **LONG** @ $62,191 (0.00243 BTC, 8x), entered 2026-06-10 17:00 (`BBWP=56.3 cross50=YES EMA21=above`). During the 7-day outage its trailing SL was frozen at $60,988 (no harm — static stop held, never hit). Post-recovery, trailing resumed and ratcheted SL $60,988 → $61,942. Currently ~+$3 (−$0.89 funding).
-- Forensics tool added: `src/scripts/investigate_long.ts` (Supabase trades/positions/bot_logs queries).
-
-### Balance
-Account value $381.22 (S43's +$19.93 SHORT win compounded in). Bot bankroll hydrates at $359.45.
-
----
-
 ## Watchlist
 
 > **Tier 0 watches — check before any other work each session.**
 
 | Since | What | Why | Action if triggered |
 |-------|------|-----|---------------------|
-| 2026-06-21 | **WS bar-close loop liveness** (after S44 7-day-dead incident) | pm2 "online" does NOT mean the bar-close loop is alive — the S5 webhook masks a dead WS. **`pm2 logs --nostream` LIES (serves stale buffered lines, S46) — read the log FILE directly and cross-check the exchange clock.** Don't trust your local machine clock either (was 35h off in S46). Fix `bb3171e` self-heals (timeout → exit → pm2 restart); verify it fired if an outage recurs. | Liveness: `ssh … "tail -5 /home/ubuntu/.pm2/logs/trading-bot-out.log"` — newest "Bar close" must be within ~15min. Exchange clock: `curl -s -X POST https://api.hyperliquid.xyz/info -d '{"type":"candleSnapshot","req":{"coin":"BTC","interval":"15m","startTime":1750000000000,"endTime":1790000000000}}'` → last candle `T` = real time |
-| 2026-06-25 | S1 SHORT open — static $61,050 floor (not trailing) | Entry $62,637 (0.00301 BTC, 10x isolated), opened Jun 23 08:15Z. S46 manually set SL to $61,050 (oid `479697922460`, locks ~+$4.78). **Trailing is OFF on this position** — hydration misread the below-entry stop as a TP (`stopOid` undefined, see row below), so it won't ratchet further. Stop is a real exchange trigger; protection intact. Watch for exit (strategy `ema_reverse_cross` or the $61,050 stop). | `ssh … "tail -30 /home/ubuntu/.pm2/logs/trading-bot-out.log"` + `curl … openOrders` for the resting stop |
-| 2026-06-25 | **Hydration misclassifies a trailed-into-profit stop as a TP** (found S46) | `main-headless.ts:122` classifies SL vs TP by trigger-price-vs-entry. A stop trailed past entry (below entry for a short / above for a long) is read as a TP on restart → `stopOid` undefined → trailing skipped for that position. Money is safe (real SL trigger stays on the book), but trailing silently stops. **Real fix: classify by the order's `tpsl` field, not price.** | On any restart with an open profitable position, check the hydration log line — if it says `SL=$… (estimated), N TP(s)` and you placed no TP, the stop was misread. |
-| 2026-05-06 | S5 cascade pipe LIVE | Receiving medium signals correctly. Monitor for first `high` severity signal. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "tail -200 /home/ubuntu/.pm2/logs/trading-bot-out.log \| grep -i cascade \| tail"` |
-| 2026-05-31 | Balance drift | Account value ~$386 (S1 SHORT uPnL ~+$8.5 unrealized; realized net −$3.16 since S44). Bot bankroll hydrates $358.47. Martin's manual trades likely source of earlier drift. | `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98 "tail -5 /home/ubuntu/.pm2/logs/trading-bot-out.log \| grep Balance"` |
+| 2026-08-20 | **WS bar-close loop liveness** (S44: 7d dead, S48: 54d dead) | pm2 "online" does NOT mean the bar-close loop is alive — the S5 webhook masks a dead WS. `pm2 logs --nostream` LIES (stale buffer) — read the log FILE. Don't trust the local machine clock (35h off in S46) — use the exchange clock. **Now guarded 3 ways (S48):** reconnect watchdog (`dbbe9c6`, 3 min stuck → `process.exit` → pm2 restart, ↺ counter climbs), digest shows `Last bar close: Nmin ago`, and the external dead-man cron posts to Discord `#errors` if >35 min stale. **If Discord is quiet, it still means check** — the dead-man itself is new and unproven on a real outage. | Liveness: `ssh … "tail -5 ~/.pm2/logs/trading-bot-out.log"` — newest `Bar close` within ~15 min. Dead-man health: `ssh … "tail -3 ~/.pm2/logs/deadman.log"` (should say `ok` every 15 min). Exchange clock: `curl -s -X POST https://api.hyperliquid.xyz/info -H 'Content-Type: application/json' -d '{"type":"candleSnapshot","req":{"coin":"BTC","interval":"15m","startTime":1750000000000,"endTime":1800000000000}}'` → last candle `T` = real time. If ↺ > 45, a watchdog/self-heal restart fired — read the error log for why. |
+| 2026-08-20 | **First trade after the outage** — three S48 fixes + the S46 oid fix all prove out on it | No position since Jul 1. The next entry exercises: (a) `aa15560` oid capture — expect `[Orders] Stop-loss modified: oid=X → Y` with Y ≠ X and NO `Failed to modify SL`; (b) if the bot restarts while that position is in profit, hydration must log it as `SL=$…` (not `1 TP(s)`) and trailing must continue; (c) command channel still `active` (kill switch reachable). | `ssh … "grep -a -E 'Stop-loss modified|Failed to modify|hydrat' ~/.pm2/logs/trading-bot-out.log \| tail -20"` |
+| 2026-05-06 | S5 cascade pipe LIVE | Receiving `medium` heartbeats hourly (still the only severity ever seen). Monitor for first `high`. | `ssh … "grep -a -i cascade ~/.pm2/logs/trading-bot-out.log \| grep -v medium \| tail"` |
+| 2026-08-20 | Balance | Account value **$381.56**, flat, all withdrawable (S1 SHORT +$4.27 on Jul 1 folded in). Bot bankroll hydrates from trade log — check the startup `Bankroll:` line matches ±funding. | `ssh … "grep -a Balance ~/.pm2/logs/trading-bot-out.log \| tail -2"` |
 
 ## What To Do Next
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Verify B fix (oid capture) on next trade** | low | `aa15560` deployed. The CURRENT S1 SHORT won't trail (hydration quirk), so the fix proves out on the *next* position with a normal above-entry stop: confirm `[Orders] Stop-loss modified: oid=X → Y` (new oid Y differs) and NO `Failed to modify SL`. Self-heal also covers stale refs. |
-| 2 | **Fix hydration SL/TP misclassification** | med | `main-headless.ts:122` — classify by the order's `tpsl` field, not trigger-price-vs-entry, so a stop trailed into profit isn't read as a TP on restart (Watchlist row 3). Until fixed, any restart with a profitable position loses trailing on it. |
-| 3 | **Monitor S1 SHORT to exit** | low | Static $61,050 floor (oid `479697922460`), entry $62,637, won't trail further. Watch for `ema_reverse_cross` exit or stop. |
-| 4 | **Verify S44 reconnect fix holds** | low | `bb3171e` running. Can't force a HL outage. Watch next real WS drop self-heals (timeout → retries → exit/pm2 restart if 10 fail). Watchlist row 1. |
-| 5 | **Leverage decision (still 1.0x)** | low | Ledger small/mixed: S6 LONG +$2.67/4.41R, S6 SHORT −$3.16, S43 SHORT +$19.93/6.95R. Likely needs more closed trades before bumping. |
-| 6 | **Meta Signals summary → Martin** | low | S38: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. Confirm VPS manual trading + balance. |
-| 7 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration fix (S32) protects web UI trades. |
-| 8 | **S2 / S3 / S7 re-evaluation** | low | All parked. S2 disabled (S33), S3 structurally unfavorable, S7 backtest -$3. Revisit only on logic rework. |
+| 1 | **Leave the bot alone and let it trade** | low | Back online 2026-08-20 after 54 days dead. It needs uninterrupted bar closes to generate the next entry, which is the validation event for four fixes (Watchlist row 2). Avoid restarts unless something is actually wrong. |
+| 2 | **Verify the dead-man cron is still running each session** | low | `tail ~/.pm2/logs/deadman.log` should show an `ok` line every 15 min. If the log stops, the cron died (or node/env changed) — that's a silent loss of the safety net. |
+| 3 | **Leverage decision (still 1.0x)** | low | 4 closed bot trades: S43 S6 SHORT +$19.93/6.95R, S6 LONG +$2.67/4.41R, S6 SHORT −$3.16, S1 SHORT +$4.27. Still too few. Revisit at ~10. |
+| 4 | **Meta Signals summary → Martin** | low | S38: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. |
+| 5 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration (S32 trade-log match + S48 order-type SL/TP) protects web UI trades. |
+| 6 | **S2 / S3 / S7 re-evaluation** | low | All parked. Revisit only on logic rework. |
+| 7 | **Optional: stop tracking `trades/trade_log.json` in git** | low | It's live per-bot data (VPS 667 lines vs repo stub). Currently `skip-worktree` on the VPS. Cleaner: `.gitignore` it + keep a committed `trade_log.example.json`. Not urgent. |

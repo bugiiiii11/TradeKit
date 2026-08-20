@@ -1,7 +1,28 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-43). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-44). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+---
+
+## What Was Done (Session 44) — P0: WS loop dead 7 days (reconnect deadlock) — recovered + fixed
+
+### VPS Deep Dive uncovered a silent P0 (was reported "healthy")
+pm2 showed `trading-bot` online, 10D uptime, ↺=40, error log empty since Jun 16 — **looked healthy**. It was not. On-chain + Supabase forensics revealed the **15m WebSocket bar-close loop had been dead since 2026-06-13 09:02** while the process stayed "online" (only the S5 cascade webhook HTTP server kept logging, masking it).
+
+**Timeline (Jun 13):** `09:00` last good bar close → `09:01:46` `[WS] No message in 66s — reconnect attempt 1/10` (Hyperliquid 502 outage) → `09:02:09` Digest error HTTP 502 → **then nothing for 7 days.** No "attempt 2/10", no bar closes, no trailing updates, no exits, no entries.
+
+**Root cause:** `reconnect()` sets `reconnecting=true` then `await subsClient.candle()`, which **hung without settling** during the outage. The `finally` that clears `reconnecting` never ran; the heartbeat guard `if (this.reconnecting) return` then suppressed every future reconnect. Flag pinned `true` forever → process never crashed → self-heal (`MAX_RECONNECT_ATTEMPTS → process.exit(1)`) never triggered. The S41 reconnect guard introduced this deadlock class (correct guard, but its gated awaits had no timeout).
+
+**Fix (`bb3171e`, deployed to VPS):** added `withTimeout()` around **every** network await in `subscribe()`/`reconnect()` — subscribe (20s), REST gap-fill (20s), unsubscribe, dispose. On timeout the await rejects → `finally` clears `reconnecting` → next heartbeat retries → eventually `process.exit(1)` → pm2 restart. Type-checks clean. Bot restarted twice (recover, then patched), both clean: position hydrated from trade-log, WS subscribed, bar closes flowing. *(S48 postscript: one error-path dispose inside `subscribe()` was missed — it hung on Jun 27 and killed the loop for 54 days. See Session 48.)*
+
+### Trade forensics (the two S43 follow-ups)
+- **S43 SHORT closed a WIN:** S6, entry $72,729 → exit $62,613, **+$19.93 / 6.95R**, exit reason `ema_reverse_cross` (strategy exit fired, *not* the stop — trailing rode alongside). Closed 2026-06-09 13:00.
+- **New open position is also S6:** BBWP breakout **LONG** @ $62,191 (0.00243 BTC, 8x), entered 2026-06-10 17:00 (`BBWP=56.3 cross50=YES EMA21=above`). During the 7-day outage its trailing SL was frozen at $60,988 (no harm — static stop held, never hit). Post-recovery, trailing resumed and ratcheted SL $60,988 → $61,942. Currently ~+$3 (−$0.89 funding).
+- Forensics tool added: `src/scripts/investigate_long.ts` (Supabase trades/positions/bot_logs queries).
+
+### Balance
+Account value $381.22 (S43's +$19.93 SHORT win compounded in). Bot bankroll hydrates at $359.45.
 
 ---
 

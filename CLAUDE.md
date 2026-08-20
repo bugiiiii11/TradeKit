@@ -11,7 +11,7 @@
 - **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$358 USDC, separate account)
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
-- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, S1+S2+S6 at 1.0x leverage (S3 disabled)
+- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, repo at `/home/ubuntu/trading-bot` (clean git checkout since S48 — deploy = `git pull` + `pm2 restart trading-bot`). S1+S6 at 1.0x leverage. Back online 2026-08-20 after a 54-day silent WS death (S48); external dead-man cron now alerts Discord `#errors` if bar closes stop.
 - **Strategy:** BTC perps, S1+S6 active (S2 disabled — net drag per 26mo backtest, S3 disabled, S7 parked). S5 cascade webhook LIVE on VPS (localhost:3456, Flash bots on same machine).
 - **Leverage:** S1=10x, S2=8x, S6=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
@@ -46,6 +46,8 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 **Strategy:** `s1_ema_trend.ts` (4H EMA8/55 cross + Daily macro), `s2_mean_reversion.ts` (1H EMA55 retest, BBWP<35, PMARP), `s3_stoch_rsi.ts` (15m StochRSI, BBWP<40 filter, 45min min hold), `s5_cascade.ts` (DeFi liquidation cascade SHORT, 4% stop, 8h max hold, webhook-triggered), `s6_bbwp_breakout.ts` (1H BBWP >50 from <20 compression within 40 1H bars, EMA21 direction, bypasses confluence), `s7_funding_filter.ts` (funding rate velocity filter, parked), `confluence.ts` (scoring + EMA200 macro filter + per-strategy leverage)
 
 **Webhook:** `src/webhook/server.ts` (Node http, POST /webhook/cascade, Bearer auth for S5 signals)
+
+**Ops:** `deploy/deadman-check.cjs` — external WS-liveness watchdog, runs from VPS cron every 15 min (NOT pm2): newest `[WS] Bar closed` row in Supabase `bot_logs` >35 min old → Discord `#errors` alert (re-alert 2h, recovery notice). Log `~/.pm2/logs/deadman.log`, state `~/.tradekit-deadman.json`.
 
 **Risk:** `manager.ts` (drawdown limits, pause, position cap=3), `sizing.ts` (calcMarginBasedSize: 5% margin), `state.ts` (bankroll/PnL tracking, Supabase hydration on restart), `trailing.ts` (breakeven SL logic — pure function, no exchange calls)
 
@@ -101,6 +103,9 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **DRY_RUN gate:** `src/main.ts` skips order placement when `DRY_RUN=true`
 - **Hyperliquid reassigns the order oid on every `modify`.** Single `modify()` does NOT echo the new oid; use **`batchModify`** (returns it via `statuses[].resting.oid`) and persist the new oid, or the next modify hits "Cannot modify canceled or filled order" (S46 trailing-stale bug).
 - **`pm2 logs --nostream` serves stale buffered lines** — for log liveness read the log FILE (`tail .pm2/logs/trading-bot-out.log`), and use the Hyperliquid latest-candle timestamp as the real clock (don't trust the local machine clock).
+- **pm2 "online" ≠ bar-close loop alive.** Twice (S44: 7d, S48: 54d) the WS loop deadlocked while the process stayed up and the 2h digest said ACTIVE. Every network await in `candle-consumer.ts` (re)connect paths MUST be `withTimeout`-wrapped — including error-path cleanup — and the heartbeat watchdog (`reconnecting` stuck >3 min → `process.exit`) is the backstop. Never add an unguarded await there.
+- **VPS `trades/trade_log.json` is live per-bot data**, flagged `git update-index --skip-worktree` on the VPS. Never `git checkout`/reset it on the box without backing it up first (`~/trade_log.backup.*.json` exists from S48).
+- **pm2-logrotate retain=30** (was 3 — destroyed S48 forensics). Supabase `bot_logs` is the durable log; query it by `source` (`ws`, `main`, `bot-vps`, `commands`, `webhook`).
 - **Margin sizing:** 5% of bankroll as margin, leverage applied on top. Portfolio compounds each trade.
 - **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S6` on VPS (S2 disabled Session 33).
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
@@ -118,8 +123,10 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - Native TP trigger execution + partial fill cascade on Hyperliquid
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
 - Trailing SL breakeven mode with real open position (not yet exercised — only trailing mode validated S43)
-- ~~Trailing SL goes stale after restart/outage~~ **FIXED S46 (`aa15560`):** root cause was Hyperliquid reassigning the order oid on every `modify`; `modifyStopLoss` now uses `batchModify` (echoes new oid), returns it, and self-heals stale refs by re-discovering the live stop. Caller persists the returned oid. Validates on the next trade with a normal above-entry stop.
-- **Hydration misclassifies a trailed-into-profit stop as a TP** (found S46): `main-headless.ts:122` classifies SL vs TP by trigger-price-vs-entry. A stop trailed past entry is read as a TP on restart → `stopOid` undefined → trailing skipped for that position (money safe, real SL trigger stays on book). Fix: classify by the order's `tpsl` field, not price.
+- **Trailing oid capture (`aa15560`, S46)** — `modifyStopLoss` uses `batchModify` and returns the reassigned oid; caller persists it. Deployed, **not yet exercised by a live trade** (no position since Jul 1). Expect `Stop-loss modified: oid=X → Y`, Y ≠ X.
+- **Hydration SL/TP by order type (`dbbe9c6`, S48)** — replaced trigger-price-vs-entry with `frontendOpenOrders().orderType`. Not yet exercised on a real restart with a profitable position.
+- **Reconnect watchdog + error-path dispose timeout (`dbbe9c6`, S48)** and **dead-man cron** — all unproven on a real Hyperliquid outage (can't force one). On the next outage, expect either a clean in-process reconnect, or ↺ to climb by one + a Discord alert.
+- **Command-channel auto-resubscribe on `CLOSED`** (S48) — not yet observed firing.
 
 **Operational:**
 - Hydration trade-log cross-check with real open position (deployed S32, validated S34+S37 — working correctly)
@@ -143,6 +150,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **TradingView Desktop** — CDP port 9222. Relaunch: `launch_tradingview.ps1`. Loses state on Windows sleep.
 - **Desktop bot** — PowerShell window, 15-min ticks. Check handoff.md for current code version status.
 - **VPS bot** — `npm run start:headless` (or pm2 on VPS). Event-driven on WebSocket bar close. Separate API wallet.
+- **Dead-man cron (VPS)** — `*/15 * * * *` runs `deploy/deadman-check.cjs` with `node --env-file=.env`. Independent of pm2; if `~/.pm2/logs/deadman.log` stops getting `ok` lines, the safety net itself is down.
 - **tradingview-mcp** — child process of desktop bot, dies with bot
 - **Supabase Realtime** — bot holds WebSocket channel for `bot_commands` INSERT events
 - **Vercel** — `trade-kit.vercel.app`, auto-deploys on push to `main`
