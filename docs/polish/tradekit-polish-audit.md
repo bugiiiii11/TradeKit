@@ -22,6 +22,7 @@ no live parameter until the owner flips `ENABLED_STRATEGIES` / env on the VPS.
 |--------|---------|-------|-----------|---------------|
 | -- | S50 | audit written, nothing shipped | -- | picks pending |
 | 1 | S50 | A1(a), B1, B2, B3, B4, G1, G2 | tsc 0, eslint 0, next build 0 | **verified S51** on trade-kit.vercel.app (market-data renders; trades date+strategy+scoreboard+toggle; strategies S6 card + LIVE/DISABLED). Shipped only after the Vercel Git reconnect -- the S50 push alone deployed nothing. One defect found and fixed in S51: G2 card sort was inverted (disabled before live). |
+| 2 | S51 | G3, G5 | tsc 0; matrix run on 126,889 aligned bars | S1+S6 edge HOLDS out-of-sample (PF 1.99, 182 trades, decay 2.33->1.99). Regime filter on S6 NOT shippable (PF 8.33 on 38 trades = artifact). Two engine bugs fixed en route: regime gate never reached S6; train window collapsed to 148d via daily-PMARP warmup. Open: S6 test window contaminated by lookback=40 selection; live/backtest WR gap 32% vs 47%. |
 
 Token note -- read fully: market-data page (lines 1-460), s1, s6, confluence (grep), snapshots.ts 15-80, format.ts,
 rein-x-tradekit.md. By range: main-headless.ts 295-445 + greps, candle-consumer.ts greps, calculator.ts greps,

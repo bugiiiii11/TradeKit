@@ -97,7 +97,63 @@ insert into strategy_templates (id, name, description, param_schema) values (
 
 Sprints 2-5 as listed in the audit: G3 walk-forward split, G5 regime A/B, G4 S6 exit variants,
 G6 new entries, then the bot deploy window (F1 stop-loss retry, F2 1D warmup 250 -> 400, F3 digest
-leverage line). None picked yet.
+leverage line). Sprint 2 shipped S51 (below); G4/G6 and the bot window remain unpicked.
+
+---
+
+## Sprint 2 (S51) -- out-of-sample truth: G3 + G5
+
+Backtests only. No bot change, no live change.
+
+### What shipped
+
+- `src/backtest/types.ts` -- `regimeFilterStrategies` (default `["S3"]`) and `regimeBlockWhen`
+  (`"trending"` default | `"sideways"`). Defaults preserve every archived S3 regime number.
+- `src/backtest/engine.ts` -- regime gate generalised off the hardcoded `"S3"`, AND repeated on
+  the S6 independent-entry path.
+- `src/scripts/backtest_binance.ts` -- `--train-until` / `--test-from` (the literal G3 ask).
+- `src/scripts/backtest_oos.ts` -- NEW. Loads once, splits, replays the 5-config matrix on both
+  windows, prints train/test side by side plus a verdict gate.
+
+### Two bugs found while running it (both would have produced fake results)
+
+1. **The regime filter never applied to S6.** S6 bypasses the confluence scorer and enters via an
+   independent path at `engine.ts:477`, which never reaches the gate in the confluence block. First
+   run returned "S6 + regime" byte-identical to "S6 only". **Property to remember: any filter added
+   to the confluence block silently no-ops on S6.**
+2. **The train window collapsed to 148 days.** `aligner.ts:72` requires a warm *daily* PMARP, which
+   needs ~370 daily bars, so ~1 year of any download is eaten as warmup. 31 months downloaded gave
+   19 usable. Fixed by downloading 55 months (`--months=55`, Feb 2022 ->), giving an 878-day train.
+
+### Result (bankroll $500/window, margin 5%, cut 2025-07-01)
+
+TEST, out-of-sample 2025-07-01 -> 2026-09-17 (444d):
+
+| Config | Trades | WR | PnL | PF | MaxDD | Sharpe |
+|---|---|---|---|---|---|---|
+| S1 only | 13 | 69% | +$61.29 | 6.60 | 2.0% | 7.77 |
+| S6 only | 190 | 47% | +$243.04 | 1.85 | 5.7% | 3.17 |
+| **S1 + S6 (live set)** | **182** | **49%** | **+$265.74** | **1.99** | **5.8%** | **3.52** |
+| S6 + regime (block chop) | 32 | 69% | +$169.58 | 7.28 | 1.9% | 7.80 |
+| S1 + S6 + regime on S6 | 38 | 71% | +$226.81 | 8.33 | 2.0% | 8.05 |
+
+Train (878d) for the decay check: S6 only PF 2.36, S1+S6 PF 2.33, S6+regime PF 6.50.
+
+**Verdict: the live S1+S6 set holds up out-of-sample** -- PF 1.99 on 182 trades, mild decay from
+2.33, which is what a real edge looks like.
+
+### Caveats that must travel with these numbers
+
+- **The test window is NOT clean for S6.** S6's `lookback=40` was chosen on a 379-day window that
+  overlaps this test window. The split fixes the method going forward; it cannot un-see that. S1 is
+  clean in this sense, S6 is not. A truly clean S6 verdict needs the parameter re-chosen on train only.
+- **The regime-filter rows are not shippable.** PF 8.33 / Sharpe 8.05 on 38 trades are backtest
+  artifacts, not production figures. It cuts trades 79% (182 -> 38) to earn $39 LESS. Do not enable.
+- **Live divergence is the real open question.** Backtest S6 = 47-50% WR at ~156 trades/yr; live S6 =
+  32% WR at ~75 trades/yr over 22 trades. The backtest is modelling something the bot is not doing
+  (entry timing, fills, slippage). Chase this before trusting any backtest PF as a live forecast.
+- S6-only train MaxDD 15.3% would trip the 15% weekly-drawdown 48h pause.
+- S1 alone stays statistically useless out-of-sample: 13 trades.
 
 ---
 

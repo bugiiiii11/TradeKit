@@ -262,6 +262,8 @@ export function runBacktest(
 
   // Regime filter: extract unique daily bars and pre-compute regime map
   let regimeMap: Map<number, RegimeInfo> | null = null;
+  const regimeGatedStrategies: StrategyId[] = config.regimeFilterStrategies ?? ["S3"];
+  const regimeBlockWhen = config.regimeBlockWhen ?? "trending";
   if (config.regimeFilter) {
     const seenDaily = new Set<number>();
     const uniqueDailyBars: BarData[] = [];
@@ -400,13 +402,20 @@ export function runBacktest(
             ?? rawSignals.find(s => s.strategy === "S2")
             ?? rawSignals[0];
 
-          // Regime filter: block S3 entries in trending markets
-          if (regimeMap && primary.strategy === "S3") {
+          // Regime filter: block entries for the gated strategies in the blocking regime.
+          // Default is S3 blocked while trending (mean reversion bleeds in trends); S6 is
+          // tested with blockWhen="sideways" instead, since a breakout strategy fails in chop.
+          if (regimeMap && regimeGatedStrategies.includes(primary.strategy as StrategyId)) {
             const regime = regimeMap.get(bar1D.timestamp);
-            if (regime?.trending) {
+            const blocked = regime
+              ? regimeBlockWhen === "sideways"
+                ? !regime.trending
+                : regime.trending
+              : false;
+            if (blocked && regime) {
               filteredSignals.push({
                 timestamp: bar15m.timestamp,
-                strategy: "S3",
+                strategy: primary.strategy as StrategyId,
                 direction: dir,
                 regime: regime.regime,
                 price: bar15m.close,
@@ -465,8 +474,27 @@ export function runBacktest(
         }
       }
 
-      // S6 independent entry (fallback when S1/S2/S3 didn't open a position)
-      if (!openPos && s6Signal) {
+      // S6 independent entry (fallback when S1/S2/S3 didn't open a position).
+      // S6 bypasses the confluence scorer, so it never reaches the regime gate above --
+      // the gate has to be repeated here or a regime filter on S6 silently does nothing.
+      let s6RegimeBlocked = false;
+      if (regimeMap && s6Signal && regimeGatedStrategies.includes("S6")) {
+        const regime = regimeMap.get(bar1D.timestamp);
+        if (regime) {
+          s6RegimeBlocked = regimeBlockWhen === "sideways" ? !regime.trending : regime.trending;
+          if (s6RegimeBlocked) {
+            filteredSignals.push({
+              timestamp: bar15m.timestamp,
+              strategy: "S6",
+              direction: s6Signal.direction,
+              regime: regime.regime,
+              price: bar15m.close,
+            });
+          }
+        }
+      }
+
+      if (!openPos && s6Signal && !s6RegimeBlocked) {
         const dir         = s6Signal.direction;
         const s6Leverage  = 8;
         const marginUsd   = equity * config.marginPct;

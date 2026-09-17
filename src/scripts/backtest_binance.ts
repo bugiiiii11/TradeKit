@@ -14,6 +14,14 @@
  *   --bankroll <n>     Starting bankroll in USD (default: 500)
  *   --margin   <n>     Margin per trade as % of bankroll (default: 5)
  *   --data-dir <path>  Path to Binance CSV directory (default: ./data/bt-data)
+ *   --train-until <YYYY-MM-DD>  End of the in-sample window (exclusive)
+ *   --test-from   <YYYY-MM-DD>  Start of the out-of-sample window (inclusive)
+ *
+ * G3 (S51): pass both split flags to report train and test windows side by side.
+ * Parameters may be tuned on the train window only; the test window is report-only.
+ * Indicators are computed across the whole dataset before splitting, which is safe
+ * because every indicator here looks strictly backwards -- the split slices the
+ * replay, not the warmup, so the test window keeps correct indicator state.
  */
 
 import * as dotenv from "dotenv";
@@ -38,6 +46,42 @@ function getNumFlag(name: string, defaultVal: number): number {
   return Number.isFinite(n) && n > 0 ? n : defaultVal;
 }
 
+function printSplitWindow(
+  label: string,
+  window: ReturnType<typeof alignBars>,
+  bankroll: number,
+  marginPct: number,
+  enabledStrategies: StrategyId[],
+): void {
+  console.log(`
+=== ${label} ===`);
+  if (window.length === 0) {
+    console.log("  No bars in this window — check the split dates against the data range.");
+    return;
+  }
+  const first = window[0].bar15m.timestamp;
+  const last = window[window.length - 1].bar15m.timestamp;
+  const days = Math.round((last - first) / (24 * 60 * 60_000));
+  console.log(
+    `  Window: ${new Date(first).toISOString().split("T")[0]} → ${new Date(last).toISOString().split("T")[0]} (${days} days, ${window.length} bars)`,
+  );
+
+  const result = runBacktest(window, { days, bankroll, marginPct, enabledStrategies });
+  const st = result.stats;
+  console.log(
+    `  Trades ${st.totalTrades} | WR ${(st.winRate * 100).toFixed(1)}% | PnL ${st.totalPnlUsd >= 0 ? "+" : ""}$${st.totalPnlUsd.toFixed(2)} ` +
+      `| PF ${st.profitFactor.toFixed(2)} | MaxDD $${st.maxDrawdownUsd.toFixed(2)} (${st.maxDrawdownPct.toFixed(1)}%) ` +
+      `| Sharpe ${st.sharpeRatio === null ? "n/a (<10 trades)" : st.sharpeRatio.toFixed(2)}`,
+  );
+  for (const id of enabledStrategies) {
+    const bs = st.byStrategy[id];
+    if (!bs || bs.trades === 0) continue;
+    console.log(
+      `    ${id}: ${bs.trades} trades, WR ${(bs.winRate * 100).toFixed(1)}%, ${bs.pnlUsd >= 0 ? "+" : ""}$${bs.pnlUsd.toFixed(2)}`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const bankroll = getNumFlag("bankroll", 500);
   const marginPct = getNumFlag("margin", 5) / 100;
@@ -45,6 +89,8 @@ async function main(): Promise<void> {
   const pmarpPeriod = getNumFlag("pmarp-period", 20);
   const pmarpLookback = getNumFlag("pmarp-lookback", 350);
   const strategiesRaw = getFlag("strategies", "S1,S2,S3");
+  const trainUntil = getFlag("train-until", "");
+  const testFrom = getFlag("test-from", "");
   const enabledStrategies = strategiesRaw.split(",").map(s => s.trim()) as StrategyId[];
 
   const indicatorParams: IndicatorParams = { pmarpPeriod, pmarpLookback };
@@ -84,6 +130,32 @@ async function main(): Promise<void> {
   console.log(`[Backtest-Binance] Window: ${days} days (${new Date(firstTs).toISOString().split("T")[0]} → ${new Date(lastTs).toISOString().split("T")[0]})`);
 
   const config: BacktestConfig = { days, bankroll, marginPct, enabledStrategies };
+
+  // Step 2b (G3): optional train/test split — report only, no parameter fitting here.
+  if (trainUntil || testFrom) {
+    const trainEnd = trainUntil ? Date.parse(`${trainUntil}T00:00:00Z`) : NaN;
+    const testStart = testFrom ? Date.parse(`${testFrom}T00:00:00Z`) : NaN;
+    if (trainUntil && !Number.isFinite(trainEnd)) {
+      console.error(`[Backtest-Binance] --train-until is not a valid YYYY-MM-DD date: ${trainUntil}`);
+      process.exit(1);
+    }
+    if (testFrom && !Number.isFinite(testStart)) {
+      console.error(`[Backtest-Binance] --test-from is not a valid YYYY-MM-DD date: ${testFrom}`);
+      process.exit(1);
+    }
+
+    const train = Number.isFinite(trainEnd)
+      ? aligned.filter(a => a.bar15m.timestamp < trainEnd)
+      : [];
+    const test = Number.isFinite(testStart)
+      ? aligned.filter(a => a.bar15m.timestamp >= testStart)
+      : [];
+
+    printSplitWindow("TRAIN (in-sample — parameters may be fitted here)", train, bankroll, marginPct, enabledStrategies);
+    printSplitWindow("TEST (out-of-sample — report only, never fit)", test, bankroll, marginPct, enabledStrategies);
+    console.log("");
+    return;
+  }
 
   // Step 3: replay
   console.log(`[Backtest-Binance] Running strategy replay...`);

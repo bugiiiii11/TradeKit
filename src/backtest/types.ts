@@ -86,8 +86,20 @@ export interface BacktestConfig {
   marginPct: number;
   /** Which strategies are enabled. Default: all three. */
   enabledStrategies?: StrategyId[];
-  /** Enable daily EMA regime filter for S3 entries. */
+  /** Enable daily EMA regime filter. Gated strategies come from regimeFilterStrategies. */
   regimeFilter?: boolean;
+  /**
+   * Which strategies the regime filter gates. Default ["S3"] (legacy behaviour).
+   * G5 (S51) generalised this so S6 can be tested against a chop filter.
+   */
+  regimeFilterStrategies?: StrategyId[];
+  /**
+   * Which regime blocks an entry.
+   * "trending" (default) suits mean-reversion strategies like S3, which bleed in strong trends.
+   * "sideways" suits breakout strategies like S6, whose failed breakouts cluster in chop.
+   * Blocking S6 on "trending" would suppress exactly the moves it exists to catch.
+   */
+  regimeBlockWhen?: "trending" | "sideways";
   /** Historical funding rates (sorted). When provided, replaces constant funding estimate. */
   fundingRates?: FundingRate[];
   /** Enable S7 funding rate momentum filter for S1/S2 entries. */
