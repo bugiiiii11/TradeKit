@@ -162,7 +162,7 @@ export default async function StrategiesPage() {
       ) : (
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
           {[...templates]
-            .sort((a, b) => Number(!isLive(b.id)) - Number(!isLive(a.id)) || a.id.localeCompare(b.id))
+            .sort((a, b) => Number(!isLive(a.id)) - Number(!isLive(b.id)) || a.id.localeCompare(b.id))
             .map((tpl) => {
               const tplConfigs = configsByTemplate.get(tpl.id) ?? [];
               const agg = statsByTemplate.get(tpl.id) ?? { count: 0, wins: 0, pnlUsd: 0 };

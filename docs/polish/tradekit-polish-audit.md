@@ -21,7 +21,7 @@ no live parameter until the owner flips `ENABLED_STRATEGIES` / env on the VPS.
 | Sprint | Session | Items | Automated | Human verdict |
 |--------|---------|-------|-----------|---------------|
 | -- | S50 | audit written, nothing shipped | -- | picks pending |
-| 1 | S50 | A1(a), B1, B2, B3, B4, G1, G2 | tsc 0, eslint 0, next build 0 | pending (checklist in docs/polish/tradekit-polish.md) |
+| 1 | S50 | A1(a), B1, B2, B3, B4, G1, G2 | tsc 0, eslint 0, next build 0 | **verified S51** on trade-kit.vercel.app (market-data renders; trades date+strategy+scoreboard+toggle; strategies S6 card + LIVE/DISABLED). Shipped only after the Vercel Git reconnect -- the S50 push alone deployed nothing. One defect found and fixed in S51: G2 card sort was inverted (disabled before live). |
 
 Token note -- read fully: market-data page (lines 1-460), s1, s6, confluence (grep), snapshots.ts 15-80, format.ts,
 rein-x-tradekit.md. By range: main-headless.ts 295-445 + greps, candle-consumer.ts greps, calculator.ts greps,
