@@ -46,53 +46,20 @@ Deploys were scp-over-`bb3171e` (git log lied about the running version). Conver
 
 ---
 
-## What Was Done (Session 46) — Trailing-stale bug fixed + deployed, manual profit floor
+## What Was Done (Session 50) — Polish audit + Sprint 1 shipped (market-data fix, strategy instrument)
 
-### Deep dive caught the trailing-stale bug firing LIVE (Watchlist row 3 triggered)
-Two red herrings nearly derailed the health check, worth recording:
-1. **Local Windows clock was ~35h behind real time** — comparing the bot against it first showed a false "PASS", then a false "35h-dead-loop P0". The exchange is the only reliable clock: queried Hyperliquid's latest 15m candle → confirmed real time + that the **WS loop was actually alive and current** (contiguous bars Jun 22→25, no gap).
-2. **`pm2 logs --nostream` serves stale buffered lines** — it reported the newest bar as 35h old while the actual log *file* (`tail`) was current. **Read the log file directly, not via `pm2 logs --nostream`, for liveness.** The Watchlist row-1 command uses `--nostream`, so that watch can lie — updated below.
+*(Session 49 was docs-only: `977a9aa` Rein x TradeKit assessment. This machine was 84 commits behind and was fast-forwarded first.)*
 
-Real finding: `[Trailing] Failed to modify SL for S1: Cannot modify canceled or filled order` firing **every bar, 88× in the current error log**, and mirrored to Discord every 15 min. Trailing was non-functional on the open S1 SHORT; its stop was frozen at $63,249 (above entry → protected nothing on a now-profitable short).
+- **`/polish scan` audit written:** `docs/polish/tradekit-polish-audit.md` — 16 items, 5 sprints, none Risk-H. Root causes: (A1) market-data page crashed on `.toFixed(null)` because the bot warms up 250 daily bars but 1D PMARP/BBWP need 350/252, NaN -> null in Supabase JSON; (A2) the -$25.74 / 29% headline sums the dead S3/S2 eras with the live S1+S6 set and there was no per-strategy instrument; (G3) every backtest is in-sample — no walk-forward split exists.
+- **Sprint 1 shipped + pushed (`4647567`, frontend only, bot untouched):** null-safe market-data page; trades page with date column, strategy column, per-strategy scoreboard (live vs backtest reference, red when >= 10 trades and 10 pts under), default window "since current config" 2026-06-01 with All-time toggle; strategies page joined on `entry_conditions.strategy`, S6 card (in-page fallback, DB row optional — SQL in the record), LIVE/DISABLED badges. Verified: tsc, eslint, `next build` all 0. Record: `docs/polish/tradekit-polish.md`.
+- **Owner rules recorded:** push after every sprint; list blockers before the next phase.
+- **Not done / not touched:** no VPS liveness check this session (Watchlist rows 1-2 still due); Supabase MCP unauthorised (row shapes inferred from `src/db/*.ts`); no browser smoke (pages behind login).
 
-### Root cause + fix B (committed `aa15560`, deployed to VPS)
-Hyperliquid **reassigns an order's oid on every `modify`**. `modifyStopLoss` used single `modify()` (which does *not* echo the new oid) and returned the *input* oid, so after the FIRST successful trail the bot tracked a dead oid forever. Same bug hit the S6 LONG in S45.
-- `orders.ts`: `modifyStopLoss` now uses **`batchModify`** (echoes new oid), returns it, and **self-heals** — if the tracked oid is stale it re-discovers the live reduce-only BTC stop and retries once (also covers restart-hydration staleness).
-- `main-headless.ts:665`: caller now persists the returned oid into `pos.stopOid`.
-- Type-checks clean. Restarted VPS bot (↺=43): position hydrated, WS subscribed, bar closes current. `batchModify` confirmed on box.
-
-### Manual profit floor (option A) — `move_s1_sl.ts`
-While the bot was still on old code, manually re-trailed the stuck S1 SHORT stop **$63,249 → $61,050** via a new one-off script (dry-run by default, hard-guarded to the VPS wallet, finds the live stop by querying the book). Locks ~+$4.78 profit (entry $62,637; BTC had fallen to ~$59,500, uPnL ~+$8.5). Atomic `modify`, position never naked. Stop oid now `479697922460`.
-
-### New latent bug found — hydration misclassifies a trailed-into-profit stop as a TP
-Hydration (`main-headless.ts:122`) classifies SL vs TP purely by trigger-price-vs-entry. The $61,050 stop is *below* entry (short trailed into profit), so on the post-fix restart the bot logged it as `SL=$62888 (estimated), 1 TP(s)` — `stopOid` undefined → **trailing skipped on this position** (harmless side effect: the Discord spam stops). Money is safe (the $61,050 order is a real SL trigger on the exchange regardless of the bot's label). Proper fix: classify by the order's `tpsl` field, not price. Added to Watchlist + Untested Code Paths.
-
-### Net state
-S1 SHORT rides a static $61,050 profit floor until it closes via strategy exit or stop. B works correctly for all *future* positions (normal above-entry stops hydrate + trail + capture oid). Account value ~$386, bankroll $358.47.
-
----
-
-## What Was Done (Session 45) — Health check + position reconciliation + post-trade forensics
-
-### WS liveness — S44 fix holding (Watchlist row 1, PASS)
-Bar-close loop **live and current** (last bar within ~2–7 min of check across the session). S6-diag logging every bar (BBWP cooled 98→87 over the session, EMA21=below/short). pm2 `trading-bot` online, 2D uptime (S44 patch restart), ↺=42. No real WS outage occurred, so the timeout-guard self-heal path still hasn't been exercised live — keep watching.
-
-### Open position reconciled — handoff was stale
-Handoff tracked an S6 LONG @ $62,191; Hyperliquid ground truth showed it **closed**, replaced by a new **S1 SHORT** -0.00301 BTC @ $62,637 (10x isolated, opened 2026-06-23 08:15Z). Confirmed S1 via clearinghouse 10x + `[Trailing] S1 short` log. uPnL drifted +$0.28 → +$0.67 over the session as BTC fell to ~$62,413. Trailing SL holding at $63,249 (ratchet-only, ~1% above entry — not yet locked-profit). Account value $377.5–377.9, bankroll $358.47.
-
-### Post-trade forensics (corrected ledger from Supabase `trades`)
-Raw fills misled an initial read; Supabase trade records are authoritative:
-- **S6 LONG** (Jun 10→21, 11d): 62191 → 63289, **+$2.67 / 4.41R**, exit `ema_reverse_cross` (strategy exit, *not* trailing SL). Survived the 7-day dead loop on a frozen static stop.
-- **S6 SHORT** (Jun 21→22, 1.7h): 63289 → 64680, **−$3.16 / −1.10R**, exit `native_sl`. Entirely between sessions, unlogged in S44.
-- **Net realized since S44: −$0.49.**
-
-### New reliability finding — trailing SL goes stale after restart/outage
-Forensics surfaced `[Trailing] Failed to modify SL: Cannot modify canceled or filled order` repeating every 15 min Jun 20 19:00–22:15. After the outage the S6 LONG's SL order ref was stale, so trailing was **non-functional on that position** until it exited. **Failed safely** (try/catch, no crash; `ema_reverse_cross` caught it at +$2.67), but a post-restart position can silently lose trailing protection. Added as Tier-0 watch. This is the known "modifyStopLoss failure" untested path manifesting live.
-
-### Docs
-Watchlist row 2 rewritten (S6 LONG → S1 SHORT), balance row updated, new trailing-stale watch added. Stray `bash.exe.stackdump` removed. Commits `cb8c590` (this session) pushed to main.
-
----
+### Sprint 2 blockers (out-of-sample backtests G3 + G5)
+1. **No Binance CSVs on this machine** — `data/` is empty; `backtest_binance.ts` expects `./data/bt-data/BTCUSDT-15m-*.csv`. Run `npx ts-node src/scripts/download_binance.ts --months=30` first (~2-3 MB; needs the range to reach Sept 2026 for a real test window).
+2. **Sprint 1 human verdict pending** — checklist in `docs/polish/tradekit-polish.md`; the audit's status table row says "pending".
+3. **Train/test cut date is an owner call** — proposed: train = 2024-03 -> 2025-06 (parameters may be tuned here), test = 2025-07 -> latest (report only). S6 lookback=40 and the S1 filters were all chosen on the full window, so expect the test-window numbers to be worse than the archive's +33%.
+4. **Bot-side items (F1 stop retry, F2 1D warmup, F3 digest leverage) stay parked** until the first post-outage trade validates the S48 fixes (Watchlist row 2).
 
 ## Watchlist
 
@@ -109,10 +76,12 @@ Watchlist row 2 rewritten (S6 LONG → S1 SHORT), balance row updated, new trail
 
 | # | Task | Risk | Notes |
 |---|------|------|-------|
-| 1 | **Leave the bot alone and let it trade** | low | Back online 2026-08-20 after 54 days dead. It needs uninterrupted bar closes to generate the next entry, which is the validation event for four fixes (Watchlist row 2). Avoid restarts unless something is actually wrong. |
-| 2 | **Verify the dead-man cron is still running each session** | low | `tail ~/.pm2/logs/deadman.log` should show an `ok` line every 15 min. If the log stops, the cron died (or node/env changed) — that's a silent loss of the safety net. |
-| 3 | **Leverage decision (still 1.0x)** | low | 4 closed bot trades: S43 S6 SHORT +$19.93/6.95R, S6 LONG +$2.67/4.41R, S6 SHORT −$3.16, S1 SHORT +$4.27. Still too few. Revisit at ~10. |
-| 4 | **Meta Signals summary → Martin** | low | S38: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. |
-| 5 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration (S32 trade-log match + S48 order-type SL/TP) protects web UI trades. |
-| 6 | **S2 / S3 / S7 re-evaluation** | low | All parked. Revisit only on logic rework. |
-| 7 | **Optional: stop tracking `trades/trade_log.json` in git** | low | It's live per-bot data (VPS 667 lines vs repo stub). Currently `skip-worktree` on the VPS. Cleaner: `.gitignore` it + keep a committed `trade_log.example.json`. Not urgent. |
+| 1 | **Verify Sprint 1 on trade-kit.vercel.app** | low | Checklist in `docs/polish/tradekit-polish.md` (market-data loads; trades scoreboard + since/all-time toggle; strategies S6 card). Then mark the audit status row verified. Optional: run the S6 `strategy_templates` insert SQL from the record. |
+| 2 | **Sprint 2 = out-of-sample truth (G3 + G5)** | low | Blockers listed in the S50 section: download Binance CSVs (`download_binance.ts --months=30`), agree the train/test cut. Then `/polish run 2`. Backtests only, no live change. Decides whether S1+S6 has an edge before any new strategy is built. |
+| 3 | **Leave the bot alone and let it trade** | low | Back online 2026-08-20 after 54 days dead. It needs uninterrupted bar closes to generate the next entry, which is the validation event for four fixes (Watchlist row 2). Avoid restarts unless something is actually wrong. |
+| 4 | **Verify the dead-man cron is still running each session** | low | `tail ~/.pm2/logs/deadman.log` should show an `ok` line every 15 min. If the log stops, the cron died (or node/env changed) — that's a silent loss of the safety net. |
+| 5 | **Leverage decision (still 1.0x)** | low | 4 closed bot trades: S43 S6 SHORT +$19.93/6.95R, S6 LONG +$2.67/4.41R, S6 SHORT −$3.16, S1 SHORT +$4.27. Still too few. Revisit at ~10. |
+| 6 | **Meta Signals summary → Martin** | low | S38: no API/webhook, Discord-only. Recommend manual trade dashboard. Ask about $179/mo subscription. |
+| 7 | **Martin's TV setups → manual trades** | med | Manual trade infra ready (S28). Hydration (S32 trade-log match + S48 order-type SL/TP) protects web UI trades. |
+| 8 | **S2 / S3 / S7 re-evaluation** | low | All parked. Revisit only on logic rework. |
+| 9 | **Optional: stop tracking `trades/trade_log.json` in git** | low | It's live per-bot data (VPS 667 lines vs repo stub). Currently `skip-worktree` on the VPS. Cleaner: `.gitignore` it + keep a committed `trade_log.example.json`. Not urgent. |

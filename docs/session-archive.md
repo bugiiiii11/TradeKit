@@ -1,7 +1,57 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-44). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-46). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+---
+
+## What Was Done (Session 46) — Trailing-stale bug fixed + deployed, manual profit floor
+
+### Deep dive caught the trailing-stale bug firing LIVE (Watchlist row 3 triggered)
+Two red herrings nearly derailed the health check, worth recording:
+1. **Local Windows clock was ~35h behind real time** — comparing the bot against it first showed a false "PASS", then a false "35h-dead-loop P0". The exchange is the only reliable clock: queried Hyperliquid's latest 15m candle → confirmed real time + that the **WS loop was actually alive and current** (contiguous bars Jun 22→25, no gap).
+2. **`pm2 logs --nostream` serves stale buffered lines** — it reported the newest bar as 35h old while the actual log *file* (`tail`) was current. **Read the log file directly, not via `pm2 logs --nostream`, for liveness.** The Watchlist row-1 command uses `--nostream`, so that watch can lie — updated below.
+
+Real finding: `[Trailing] Failed to modify SL for S1: Cannot modify canceled or filled order` firing **every bar, 88× in the current error log**, and mirrored to Discord every 15 min. Trailing was non-functional on the open S1 SHORT; its stop was frozen at $63,249 (above entry → protected nothing on a now-profitable short).
+
+### Root cause + fix B (committed `aa15560`, deployed to VPS)
+Hyperliquid **reassigns an order's oid on every `modify`**. `modifyStopLoss` used single `modify()` (which does *not* echo the new oid) and returned the *input* oid, so after the FIRST successful trail the bot tracked a dead oid forever. Same bug hit the S6 LONG in S45.
+- `orders.ts`: `modifyStopLoss` now uses **`batchModify`** (echoes new oid), returns it, and **self-heals** — if the tracked oid is stale it re-discovers the live reduce-only BTC stop and retries once (also covers restart-hydration staleness).
+- `main-headless.ts:665`: caller now persists the returned oid into `pos.stopOid`.
+- Type-checks clean. Restarted VPS bot (↺=43): position hydrated, WS subscribed, bar closes current. `batchModify` confirmed on box.
+
+### Manual profit floor (option A) — `move_s1_sl.ts`
+While the bot was still on old code, manually re-trailed the stuck S1 SHORT stop **$63,249 → $61,050** via a new one-off script (dry-run by default, hard-guarded to the VPS wallet, finds the live stop by querying the book). Locks ~+$4.78 profit (entry $62,637; BTC had fallen to ~$59,500, uPnL ~+$8.5). Atomic `modify`, position never naked. Stop oid now `479697922460`.
+
+### New latent bug found — hydration misclassifies a trailed-into-profit stop as a TP
+Hydration (`main-headless.ts:122`) classifies SL vs TP purely by trigger-price-vs-entry. The $61,050 stop is *below* entry (short trailed into profit), so on the post-fix restart the bot logged it as `SL=$62888 (estimated), 1 TP(s)` — `stopOid` undefined → **trailing skipped on this position** (harmless side effect: the Discord spam stops). Money is safe (the $61,050 order is a real SL trigger on the exchange regardless of the bot's label). Proper fix: classify by the order's `tpsl` field, not price. Added to Watchlist + Untested Code Paths.
+
+### Net state
+S1 SHORT rides a static $61,050 profit floor until it closes via strategy exit or stop. B works correctly for all *future* positions (normal above-entry stops hydrate + trail + capture oid). Account value ~$386, bankroll $358.47.
+
+---
+
+## What Was Done (Session 45) — Health check + position reconciliation + post-trade forensics
+
+### WS liveness — S44 fix holding (Watchlist row 1, PASS)
+Bar-close loop **live and current** (last bar within ~2–7 min of check across the session). S6-diag logging every bar (BBWP cooled 98→87 over the session, EMA21=below/short). pm2 `trading-bot` online, 2D uptime (S44 patch restart), ↺=42. No real WS outage occurred, so the timeout-guard self-heal path still hasn't been exercised live — keep watching.
+
+### Open position reconciled — handoff was stale
+Handoff tracked an S6 LONG @ $62,191; Hyperliquid ground truth showed it **closed**, replaced by a new **S1 SHORT** -0.00301 BTC @ $62,637 (10x isolated, opened 2026-06-23 08:15Z). Confirmed S1 via clearinghouse 10x + `[Trailing] S1 short` log. uPnL drifted +$0.28 → +$0.67 over the session as BTC fell to ~$62,413. Trailing SL holding at $63,249 (ratchet-only, ~1% above entry — not yet locked-profit). Account value $377.5–377.9, bankroll $358.47.
+
+### Post-trade forensics (corrected ledger from Supabase `trades`)
+Raw fills misled an initial read; Supabase trade records are authoritative:
+- **S6 LONG** (Jun 10→21, 11d): 62191 → 63289, **+$2.67 / 4.41R**, exit `ema_reverse_cross` (strategy exit, *not* trailing SL). Survived the 7-day dead loop on a frozen static stop.
+- **S6 SHORT** (Jun 21→22, 1.7h): 63289 → 64680, **−$3.16 / −1.10R**, exit `native_sl`. Entirely between sessions, unlogged in S44.
+- **Net realized since S44: −$0.49.**
+
+### New reliability finding — trailing SL goes stale after restart/outage
+Forensics surfaced `[Trailing] Failed to modify SL: Cannot modify canceled or filled order` repeating every 15 min Jun 20 19:00–22:15. After the outage the S6 LONG's SL order ref was stale, so trailing was **non-functional on that position** until it exited. **Failed safely** (try/catch, no crash; `ema_reverse_cross` caught it at +$2.67), but a post-restart position can silently lose trailing protection. Added as Tier-0 watch. This is the known "modifyStopLoss failure" untested path manifesting live.
+
+### Docs
+Watchlist row 2 rewritten (S6 LONG → S1 SHORT), balance row updated, new trailing-stale watch added. Stray `bash.exe.stackdump` removed. Commits `cb8c590` (this session) pushed to main.
+
+---
 
 ---
 
@@ -1222,4 +1272,4 @@ Committed: `17331cf`. Deployed to VPS with `TRAILING_MODE=off` (zero-risk). Will
 
 ### VPS Health Check
 Bot healthy, ticking every 15m. Balance $320.67 (unchanged). S6 BBWP=62.3 (crossed 50 but EMA21=below/short direction). S1 still blocked by Daily-EMA200=below. Martin's manual position hydrated correctly on restart.
-
+
