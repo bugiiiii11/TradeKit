@@ -126,7 +126,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - ~~**Trailing oid capture (`aa15560`, S46)**~~ — **VALIDATED S51.** Live on 2026-09-14: four consecutive `Stop-loss modified: oid=X → Y` (Y ≠ X) ratcheting $77541.5 → $77831.6, each new oid carried into the next modify. Last `Failed to modify SL` was 2026-06-25, i.e. pre-fix. Closed.
 - **Hydration SL/TP by order type (`dbbe9c6`, S48)** — replaced trigger-price-vs-entry with `frontendOpenOrders().orderType`. Not yet exercised on a real restart with a profitable position.
 - **Reconnect watchdog + error-path dispose timeout (`dbbe9c6`, S48)** and **dead-man cron** — all unproven on a real Hyperliquid outage (can't force one). On the next outage, expect either a clean in-process reconnect, or ↺ to climb by one + a Discord alert.
-- **Command-channel auto-resubscribe on `CLOSED`** (S48) — not yet observed firing.
+- **Command-channel auto-resubscribe on `CLOSED`** (S48) — **observed firing continuously, S51.** The channel closes ~30s after every successful subscribe, so the resubscribe path runs ~2,880×/day. It works (the startup sweep claims pending commands each cycle, so the kill switch survives with ~30s latency) but it is masking a real defect and flooding `bot_logs`. See handoff Watchlist.
 
 **Operational:**
 - Hydration trade-log cross-check with real open position (deployed S32, validated S34+S37 — working correctly)
