@@ -123,7 +123,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - Native TP trigger execution + partial fill cascade on Hyperliquid
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
 - Trailing SL breakeven mode with real open position (not yet exercised — only trailing mode validated S43)
-- **Trailing oid capture (`aa15560`, S46)** — `modifyStopLoss` uses `batchModify` and returns the reassigned oid; caller persists it. Deployed, **not yet exercised by a live trade** (no position since Jul 1). Expect `Stop-loss modified: oid=X → Y`, Y ≠ X.
+- ~~**Trailing oid capture (`aa15560`, S46)**~~ — **VALIDATED S51.** Live on 2026-09-14: four consecutive `Stop-loss modified: oid=X → Y` (Y ≠ X) ratcheting $77541.5 → $77831.6, each new oid carried into the next modify. Last `Failed to modify SL` was 2026-06-25, i.e. pre-fix. Closed.
 - **Hydration SL/TP by order type (`dbbe9c6`, S48)** — replaced trigger-price-vs-entry with `frontendOpenOrders().orderType`. Not yet exercised on a real restart with a profitable position.
 - **Reconnect watchdog + error-path dispose timeout (`dbbe9c6`, S48)** and **dead-man cron** — all unproven on a real Hyperliquid outage (can't force one). On the next outage, expect either a clean in-process reconnect, or ↺ to climb by one + a Discord alert.
 - **Command-channel auto-resubscribe on `CLOSED`** (S48) — not yet observed firing.
