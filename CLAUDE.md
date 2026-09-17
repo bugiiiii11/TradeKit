@@ -153,7 +153,10 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **Dead-man cron (VPS)** — `*/15 * * * *` runs `deploy/deadman-check.cjs` with `node --env-file=.env`. Independent of pm2; if `~/.pm2/logs/deadman.log` stops getting `ok` lines, the safety net itself is down.
 - **tradingview-mcp** — child process of desktop bot, dies with bot
 - **Supabase Realtime** — bot holds WebSocket channel for `bot_commands` INSERT events
-- **Vercel** — `trade-kit.vercel.app`, auto-deploys on push to `main`
+- **Vercel** — `trade-kit.vercel.app`, **NO Git auto-deploy** (verified S51: project has no connected
+  repo; every deployment in history is a manual CLI deploy). A push to `main` does NOT ship the frontend.
+  Deploy = `npx vercel --prod` (project root dir is `frontend`, Node 24.x). Reconnecting GitHub in the
+  Vercel dashboard is the pending fix — until then, pushing and shipping are separate steps.
 - **Safety hooks** — all 5 active and wired in `.claude/settings.json` (`jq` installed). `protect-files.sh` blocks Edit/Write to secret files; `block-dangerous.sh` blocks destructive Bash + force-push-to-main + Bash-level `.env`/key reads/exfil (S47); `block-internal-urls.sh` (SSRF), `audit-all.sh` + `scan-injection.sh` (PostToolUse, log to global `~/.claude/safety-audit.jsonl`). Native `deny` list (jq-independent) also blocks `rm -rf`, force-push, `cat .env`, `git add .env`.
 
 ## Security Rules

@@ -2,7 +2,10 @@
 
 Audit: `docs/polish/tradekit-polish-audit.md`. One section per shipped sprint, appended in order.
 Constraint (every sprint): the VPS bot trades real money; bot-side changes need a deliberate restart
-window (handoff row 1). Frontend deploys through Vercel on push to `main` and never touches the bot.
+window (handoff row 1). Frontend never touches the bot. **Correction (S51): Vercel does NOT auto-deploy
+on push to `main`** — the project has no connected Git repo, so Sprint 1 sat pushed-but-undeployed for
+the whole S50->S51 gap and the live site still served a 27-day-old build. Shipping needs an explicit
+`npx vercel --prod`, or the GitHub connection repaired in the Vercel dashboard.
 
 ## Measuring guide -- the strategy instrument
 
@@ -57,7 +60,7 @@ npx next build               -> Compiled successfully, all 8 routes, exit 0
 No browser smoke: every page sits behind the login proxy and no test credentials are available to the
 assistant. Vercel preview + the checklist below is the verification.
 
-### Checks that need a human (after push to `main`, Vercel deploy ~2 min)
+### Checks that need a human (after a Vercel deploy actually lands -- a push alone is NOT enough, see the S51 correction above)
 
 1. `/market-data` loads (no "This page couldn't load"). Volatility card: 15m/1H/4H rows have numbers,
    1D row shows "—" twice plus the grey hint line. Momentum card: four rows with numbers.
