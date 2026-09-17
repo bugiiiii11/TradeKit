@@ -59,6 +59,15 @@ let _lastRealtimeStatus: string | null = null;
 let _realtimeErrorCount = 0;
 let _stopped = false;
 let _resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * True only while WE are tearing a channel down on purpose. removeChannel()
+ * synchronously fires that channel's own subscribe callback with status CLOSED
+ * (verified against @supabase/realtime-js 2.103.0), so without this flag our
+ * own teardown is indistinguishable from the server dropping us - and arms yet
+ * another resubscribe. That was the S52 flap: one genuine close on 2026-08-21
+ * latched the bot into killing its own healthy channel every 30s, forever.
+ */
+let _tearingDown = false;
 
 const RESUBSCRIBE_DELAY_MS = 30_000;
 
@@ -76,7 +85,12 @@ function scheduleResubscribe(ctx: CommandHandlerContext, botSource?: string): vo
     if (_stopped) return;
     const supabase = getSupabase();
     if (supabase && _channel) {
-      try { await supabase.removeChannel(_channel); } catch { /* ignore */ }
+      _tearingDown = true;
+      try {
+        await supabase.removeChannel(_channel);
+      } catch { /* ignore */ } finally {
+        _tearingDown = false;
+      }
     }
     _channel = null;
     _lastRealtimeStatus = null;
@@ -145,8 +159,10 @@ export async function startCommandSubscription(
     console.error("[Commands] Startup sweep exception:", err);
   }
 
-  // 2. Realtime subscription.
-  _channel = supabase
+  // 2. Realtime subscription. `chan` lets the status callback tell its own
+  //    channel apart from a newer one created by a later resubscribe.
+  let chan: RealtimeChannel | null = null;
+  chan = supabase
     .channel("bot_commands_stream")
     .on(
       "postgres_changes",
@@ -178,13 +194,18 @@ export async function startCommandSubscription(
         }
         _lastRealtimeStatus = status;
       } else if (status === "CLOSED") {
-        if (!_stopped) {
+        // Ignore closes we caused ourselves (teardown / shutdown) and closes
+        // reported by a channel from an earlier generation - neither means the
+        // live channel is gone, and acting on them re-arms the timer forever.
+        const stale = _channel !== null && chan !== null && chan !== _channel;
+        if (!_stopped && !_tearingDown && !stale) {
           console.warn(`[Commands] Realtime subscription closed — resubscribing in ${RESUBSCRIBE_DELAY_MS / 1000}s`);
           scheduleResubscribe(ctx, botSource);
         }
         _lastRealtimeStatus = status;
       }
     });
+  _channel = chan;
 }
 
 /**
