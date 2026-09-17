@@ -1,4 +1,4 @@
-import { BookOpen, Layers3, Sparkles, Zap } from "lucide-react";
+import { Activity, BookOpen, Layers3, Sparkles, Zap } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -36,6 +36,43 @@ type ParamProperty = {
 type TradeForStats = {
   strategy_config_id: string | null;
   pnl_usd: number | string | null;
+  source: "bot" | "manual" | null;
+  entry_conditions: { strategy?: string } | null;
+};
+
+type TemplateStats = { count: number; wins: number; pnlUsd: number };
+
+/**
+ * Live status per strategy id. The bot writes the strategy into
+ * trades.entry_conditions.strategy (strategy_config_id is always null until a
+ * config editor exists), so stats are joined on that field. S2/S3 stay listed
+ * for history; S6 runs live but has no strategy_templates row yet, so a
+ * fallback card is rendered when the DB lacks it.
+ */
+const STATUS_BY_ID: Record<string, { live: boolean; reason: string }> = {
+  s1: { live: true, reason: "Enabled on the VPS bot (10x)" },
+  s6: { live: true, reason: "Enabled on the VPS bot (8x)" },
+  s2: { live: false, reason: "Disabled: -$30 / 31% WR over 26 months (Session 31 backtest)" },
+  s3: { live: false, reason: "Disabled: -$82 / PF 0.51 over 379 days (Session 28 backtest)" },
+};
+
+const S6_FALLBACK: StrategyTemplate = {
+  id: "s6",
+  name: "BBWP Volatility Breakout",
+  description:
+    "Trend-following breakout on 1H. Enters when BBWP crosses above 50 after a recent compression (<20 within 40 bars); direction from price vs 1H EMA21. 2% stop. Exits on 1H EMA8/55 reverse cross or when the BBWP expansion cycle completes (>85 then <35). Bypasses the confluence scorer.",
+  param_schema: {
+    groups: { risk: ["stop_distance_pct", "default_leverage"], timeframes: ["primary_tf"], entry: ["compression_threshold", "expansion_threshold", "compression_lookback"] },
+    properties: {
+      stop_distance_pct: { type: "number", default: 0.02 },
+      default_leverage: { type: "number", default: 8 },
+      primary_tf: { type: "string", default: "1H" },
+      compression_threshold: { type: "number", default: 20 },
+      expansion_threshold: { type: "number", default: 50 },
+      compression_lookback: { type: "number", default: 40 },
+    },
+  },
+  created_at: "",
 };
 
 type StrategyConfigRef = {
@@ -51,6 +88,7 @@ const ICON_BY_ID: Record<string, React.ReactNode> = {
   s1: <Layers3 className="h-5 w-5" />,
   s2: <BookOpen className="h-5 w-5" />,
   s3: <Zap className="h-5 w-5" />,
+  s6: <Activity className="h-5 w-5" />,
 };
 
 export default async function StrategiesPage() {
@@ -62,12 +100,33 @@ export default async function StrategiesPage() {
       supabase
         .from("strategy_configs")
         .select("id, template_id, name, enabled"),
-      supabase.from("trades").select("strategy_config_id, pnl_usd"),
+      supabase
+        .from("trades")
+        .select("strategy_config_id, pnl_usd, source, entry_conditions"),
     ]);
 
-  const templates = (templateRows ?? []) as StrategyTemplate[];
+  const dbTemplates = (templateRows ?? []) as StrategyTemplate[];
+  const templates = dbTemplates.some((t) => t.id === "s6")
+    ? dbTemplates
+    : [...dbTemplates, S6_FALLBACK];
   const configs = (configRows ?? []) as StrategyConfigRef[];
   const trades = (tradeRows ?? []) as TradeForStats[];
+
+  // Stats per template id, joined on entry_conditions.strategy (lowercased).
+  const statsByTemplate = new Map<string, TemplateStats>();
+  for (const t of trades) {
+    if (t.source === "manual") continue;
+    if (t.pnl_usd === null || t.pnl_usd === undefined) continue;
+    const id = t.entry_conditions?.strategy?.toLowerCase();
+    if (!id) continue;
+    const pnl = Number(t.pnl_usd);
+    if (!Number.isFinite(pnl)) continue;
+    const prev = statsByTemplate.get(id) ?? { count: 0, wins: 0, pnlUsd: 0 };
+    prev.count += 1;
+    if (pnl > 0) prev.wins += 1;
+    prev.pnlUsd += pnl;
+    statsByTemplate.set(id, prev);
+  }
 
   // Build template → [config.id] map so we can aggregate trades by template.
   const configsByTemplate = new Map<string, StrategyConfigRef[]>();
@@ -77,33 +136,15 @@ export default async function StrategiesPage() {
     configsByTemplate.set(c.template_id, list);
   }
 
-  // Build config.id → stats map.
-  const statsByConfig = new Map<
-    string,
-    { count: number; wins: number; pnlUsd: number }
-  >();
-  for (const t of trades) {
-    if (!t.strategy_config_id) continue;
-    const pnl = t.pnl_usd === null ? 0 : Number(t.pnl_usd);
-    const prev = statsByConfig.get(t.strategy_config_id) ?? {
-      count: 0,
-      wins: 0,
-      pnlUsd: 0,
-    };
-    prev.count += 1;
-    if (pnl > 0) prev.wins += 1;
-    prev.pnlUsd += Number.isFinite(pnl) ? pnl : 0;
-    statsByConfig.set(t.strategy_config_id, prev);
-  }
-
   return (
     <>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Strategies</h1>
         <p className="text-sm text-muted-foreground">
-          The three strategies that power the confluence scorer. Each one
-          votes on every tick; the bot only enters when at least one fires
-          and the Daily EMA200 macro filter agrees.
+          Every strategy the bot has run. S1 and S6 are live on the VPS bot;
+          S2 and S3 are kept for history and were disabled after their
+          backtests went negative. Live stats are all-time, joined on the
+          strategy each trade was opened with.
         </p>
       </div>
 
@@ -119,19 +160,21 @@ export default async function StrategiesPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-3">
-          {templates.map((tpl) => {
-            const tplConfigs = configsByTemplate.get(tpl.id) ?? [];
-            const agg = aggregate(tplConfigs, statsByConfig);
-            return (
-              <StrategyCard
-                key={tpl.id}
-                template={tpl}
-                configs={tplConfigs}
-                stats={agg}
-              />
-            );
-          })}
+        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+          {[...templates]
+            .sort((a, b) => Number(!isLive(b.id)) - Number(!isLive(a.id)) || a.id.localeCompare(b.id))
+            .map((tpl) => {
+              const tplConfigs = configsByTemplate.get(tpl.id) ?? [];
+              const agg = statsByTemplate.get(tpl.id) ?? { count: 0, wins: 0, pnlUsd: 0 };
+              return (
+                <StrategyCard
+                  key={tpl.id}
+                  template={tpl}
+                  configs={tplConfigs}
+                  stats={agg}
+                />
+              );
+            })}
         </div>
       )}
       </AnimateIn>
@@ -148,21 +191,8 @@ export default async function StrategiesPage() {
   );
 }
 
-function aggregate(
-  configs: StrategyConfigRef[],
-  statsByConfig: Map<string, { count: number; wins: number; pnlUsd: number }>,
-): { count: number; wins: number; pnlUsd: number } {
-  let count = 0;
-  let wins = 0;
-  let pnlUsd = 0;
-  for (const c of configs) {
-    const s = statsByConfig.get(c.id);
-    if (!s) continue;
-    count += s.count;
-    wins += s.wins;
-    pnlUsd += s.pnlUsd;
-  }
-  return { count, wins, pnlUsd };
+function isLive(id: string): boolean {
+  return STATUS_BY_ID[id]?.live ?? false;
 }
 
 function StrategyCard({
@@ -172,11 +202,12 @@ function StrategyCard({
 }: {
   template: StrategyTemplate;
   configs: StrategyConfigRef[];
-  stats: { count: number; wins: number; pnlUsd: number };
+  stats: TemplateStats;
 }) {
   const icon = ICON_BY_ID[template.id] ?? (
     <Sparkles className="h-5 w-5" />
   );
+  const status = STATUS_BY_ID[template.id];
   const schema = template.param_schema ?? {};
   const properties = schema.properties ?? {};
 
@@ -187,7 +218,7 @@ function StrategyCard({
     stats.count > 0 ? Math.round((stats.wins / stats.count) * 100) : null;
 
   return (
-    <Card className="flex h-full flex-col">
+    <Card className={`flex h-full flex-col ${status && !status.live ? "opacity-70" : ""}`}>
       <CardHeader>
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
@@ -199,6 +230,15 @@ function StrategyCard({
               <Badge variant="outline" className="font-mono text-[10px]">
                 {template.id.toUpperCase()}
               </Badge>
+              {status && (
+                <Badge
+                  variant={status.live ? "default" : "secondary"}
+                  className="text-[10px]"
+                  title={status.reason}
+                >
+                  {status.live ? "LIVE" : "DISABLED"}
+                </Badge>
+              )}
             </div>
             <CardDescription className="text-xs">
               {configs.length} config{configs.length === 1 ? "" : "s"} ·{" "}
@@ -209,6 +249,9 @@ function StrategyCard({
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-4">
         <p className="text-sm text-muted-foreground">{template.description}</p>
+        {status && !status.live && (
+          <p className="text-xs text-muted-foreground">{status.reason}</p>
+        )}
 
         {/* Live stats */}
         <div className="grid grid-cols-3 gap-2 rounded-md border border-border bg-muted/30 p-3">

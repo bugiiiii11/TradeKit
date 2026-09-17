@@ -29,7 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { AnimateIn } from "@/components/animate-in";
-import { formatPrice, formatRelativeTime, formatFundingRate } from "@/lib/format";
+import { formatPrice, formatRelativeTime, formatFundingRate, num } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,19 +59,25 @@ type FearGreed = {
   data: Array<{ value: string; value_classification: string; timestamp: string }>;
 };
 
+/**
+ * Indicator fields are `number | null`: the bot stores NaN as null when its
+ * warmup history is shorter than the indicator lookback (1D BBWP/PMARP need
+ * 252/350 daily bars; the VPS bot loads 250). Never call .toFixed directly.
+ */
+type Ind = number | null;
 type IndicatorSnapshot = {
   timeframe: string;
-  close: number;
-  ema8: number;
-  ema13: number;
-  ema21: number;
-  ema55: number;
-  ema200: number;
-  rsi14: number;
-  stochK: number;
-  stochD: number;
-  bbwp: number;
-  pmarp: number;
+  close: Ind;
+  ema8: Ind;
+  ema13: Ind;
+  ema21: Ind;
+  ema55: Ind;
+  ema200: Ind;
+  rsi14: Ind;
+  stochK: Ind;
+  stochD: Ind;
+  bbwp: Ind;
+  pmarp: Ind;
 };
 
 type MarketSnapshot = {
@@ -329,7 +335,7 @@ export default async function MarketDataPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {snap1D && (
+              {snap1D && snap1D.close != null && snap1D.ema200 != null && (
                 <>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">BTC Price</span>
@@ -383,7 +389,7 @@ export default async function MarketDataPage() {
                       <span>
                         RSI{" "}
                         <span className={rsiColor(snap.rsi14)}>
-                          {snap.rsi14.toFixed(1)}
+                          {num(snap.rsi14)}
                         </span>
                         <span className="ml-1 text-xs text-muted-foreground">
                           {rsiLabel(snap.rsi14)}
@@ -392,11 +398,11 @@ export default async function MarketDataPage() {
                       <span>
                         StochK/D{" "}
                         <span className={stochColor(snap.stochK)}>
-                          {snap.stochK.toFixed(1)}
+                          {num(snap.stochK)}
                         </span>
                         /
                         <span className={stochColor(snap.stochD)}>
-                          {snap.stochD.toFixed(1)}
+                          {num(snap.stochD)}
                         </span>
                         <span className="ml-1 text-xs text-muted-foreground">
                           {stochLabel(snap.stochK, snap.stochD)}
@@ -407,13 +413,13 @@ export default async function MarketDataPage() {
                 ) : null,
               )}
               <Explanation>
-                {snap15m && snap15m.stochK > 80 && snap15m.stochD > 80
+                {snap15m && snap15m.stochK != null && snap15m.stochD != null && snap15m.stochK > 80 && snap15m.stochD > 80
                   ? "15m StochRSI is overbought — a bearish crossover (K drops below D) could trigger a S3 short signal."
-                  : snap15m && snap15m.stochK < 20 && snap15m.stochD < 20
+                  : snap15m && snap15m.stochK != null && snap15m.stochD != null && snap15m.stochK < 20 && snap15m.stochD < 20
                     ? "15m StochRSI is oversold — a bullish crossover (K rises above D) could trigger a S3 long signal."
                     : "StochRSI is in the neutral zone on 15m — no immediate S3 signal expected."}
-                {snap1D
-                  ? ` Daily RSI at ${snap1D.rsi14.toFixed(0)} is ${snap1D.rsi14 > 70 ? "overbought — potential pullback ahead" : snap1D.rsi14 < 30 ? "oversold — potential bounce ahead" : "neutral"}.`
+                {snap1D && snap1D.rsi14 != null
+                  ? ` Daily RSI at ${num(snap1D.rsi14, 0)} is ${snap1D.rsi14 > 70 ? "overbought — potential pullback ahead" : snap1D.rsi14 < 30 ? "oversold — potential bounce ahead" : "neutral"}.`
                   : ""}
               </Explanation>
             </CardContent>
@@ -443,24 +449,31 @@ export default async function MarketDataPage() {
                       <span>
                         BBWP{" "}
                         <span className={bbwpColor(snap.bbwp)}>
-                          {snap.bbwp.toFixed(1)}
+                          {num(snap.bbwp)}
                         </span>
                         <span className="ml-1 text-xs text-muted-foreground">
-                          {snap.bbwp > 80 ? "high vol" : snap.bbwp < 20 ? "low vol" : "moderate"}
+                          {snap.bbwp == null ? "n/a" : snap.bbwp > 80 ? "high vol" : snap.bbwp < 20 ? "low vol" : "moderate"}
                         </span>
                       </span>
                       <span>
                         PMARP{" "}
                         <span className={pmarpColor(snap.pmarp)}>
-                          {snap.pmarp.toFixed(1)}
+                          {num(snap.pmarp)}
                         </span>
                         <span className="ml-1 text-xs text-muted-foreground">
-                          {snap.pmarp > 80 ? "extended" : snap.pmarp < 20 ? "compressed" : "normal"}
+                          {snap.pmarp == null ? "n/a" : snap.pmarp > 80 ? "extended" : snap.pmarp < 20 ? "compressed" : "normal"}
                         </span>
                       </span>
                     </div>
                   </div>
                 ) : null,
+              )}
+              {snap1D && (snap1D.bbwp == null || snap1D.pmarp == null) && (
+                <p className="text-xs text-muted-foreground">
+                  1D BBWP/PMARP need 252/350 daily bars of history; the bot
+                  currently loads 250, so they show as &ldquo;—&rdquo; until
+                  the warmup is extended.
+                </p>
               )}
               <Explanation>
                 <strong>BBWP</strong> measures how wide Bollinger Bands are compared
@@ -468,7 +481,7 @@ export default async function MarketDataPage() {
                 coiled market (breakout likely). <strong>PMARP</strong> measures where
                 price sits relative to its historical range. High = price is stretched
                 far from its average (overextended), low = compressed near the mean.
-                {snap1H && snap1H.bbwp < 35
+                {snap1H && snap1H.bbwp != null && snap1H.bbwp < 35
                   ? " 1H BBWP is low — conditions favor a S2 mean-reversion entry."
                   : " 1H BBWP is above 35 — S2 (mean reversion) is unlikely to fire."}
               </Explanation>
@@ -506,9 +519,9 @@ export default async function MarketDataPage() {
                 EMA8 &gt; EMA13 &gt; EMA21 &gt; EMA55, all timeframes agree the
                 trend is up. The bot&apos;s S1 strategy watches for EMA8/EMA55
                 crossovers on the 4H chart.{" "}
-                {snap4H && snap4H.ema8 > snap4H.ema55
+                {snap4H && snap4H.ema8 != null && snap4H.ema55 != null && snap4H.ema8 > snap4H.ema55
                   ? "4H EMA8 is above EMA55 — S1 leans bullish."
-                  : snap4H && snap4H.ema8 < snap4H.ema55
+                  : snap4H && snap4H.ema8 != null && snap4H.ema55 != null && snap4H.ema8 < snap4H.ema55
                     ? "4H EMA8 is below EMA55 — S1 leans bearish."
                     : ""}
               </Explanation>
@@ -618,17 +631,19 @@ function MacroBadge({
 }
 
 function EmaAlignment({ snap }: { snap: IndicatorSnapshot }) {
+  // Null (short warmup) is mapped to NaN: every comparison below is then false,
+  // so the alignment renders as "=" / neutral instead of crashing.
+  const v = (x: Ind) => (x == null ? NaN : x);
   const emas = [
-    { label: "8", value: snap.ema8 },
-    { label: "13", value: snap.ema13 },
-    { label: "21", value: snap.ema21 },
-    { label: "55", value: snap.ema55 },
+    { label: "8", value: v(snap.ema8) },
+    { label: "13", value: v(snap.ema13) },
+    { label: "21", value: v(snap.ema21) },
+    { label: "55", value: v(snap.ema55) },
   ];
+  const [e8, e13, e21, e55] = emas.map((e) => e.value);
 
-  const bullish =
-    snap.ema8 > snap.ema13 && snap.ema13 > snap.ema21 && snap.ema21 > snap.ema55;
-  const bearish =
-    snap.ema8 < snap.ema13 && snap.ema13 < snap.ema21 && snap.ema21 < snap.ema55;
+  const bullish = e8 > e13 && e13 > e21 && e21 > e55;
+  const bearish = e8 < e13 && e13 < e21 && e21 < e55;
 
   return (
     <div className="flex items-center gap-2">
@@ -681,13 +696,15 @@ function Explanation({ children }: { children: React.ReactNode }) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function rsiColor(v: number) {
+function rsiColor(v: Ind) {
+  if (v == null) return "";
   if (v >= 70) return "font-medium text-red-500";
   if (v <= 30) return "font-medium text-green-500";
   return "font-medium";
 }
 
-function rsiLabel(v: number) {
+function rsiLabel(v: Ind) {
+  if (v == null) return "n/a";
   if (v >= 70) return "overbought";
   if (v <= 30) return "oversold";
   if (v >= 60) return "bullish";
@@ -695,25 +712,29 @@ function rsiLabel(v: number) {
   return "neutral";
 }
 
-function stochColor(v: number) {
+function stochColor(v: Ind) {
+  if (v == null) return "";
   if (v >= 80) return "font-medium text-red-500";
   if (v <= 20) return "font-medium text-green-500";
   return "font-medium";
 }
 
-function stochLabel(k: number, d: number) {
+function stochLabel(k: Ind, d: Ind) {
+  if (k == null || d == null) return "n/a";
   if (k > 80 && d > 80) return k > d ? "overbought" : "bearish cross";
   if (k < 20 && d < 20) return k < d ? "oversold" : "bullish cross";
   return "neutral";
 }
 
-function bbwpColor(v: number) {
+function bbwpColor(v: Ind) {
+  if (v == null) return "";
   if (v > 80) return "font-medium text-orange-400";
   if (v < 20) return "font-medium text-blue-400";
   return "font-medium";
 }
 
-function pmarpColor(v: number) {
+function pmarpColor(v: Ind) {
+  if (v == null) return "";
   if (v > 80) return "font-medium text-orange-400";
   if (v < 20) return "font-medium text-blue-400";
   return "font-medium";

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Banknote,
   History,
@@ -25,7 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { AnimateIn } from "@/components/animate-in";
-import { formatPrice, formatTime, formatUsd } from "@/lib/format";
+import { formatDateTime, formatPrice, formatUsd } from "@/lib/format";
 
 type Trade = {
   id: string;
@@ -47,32 +48,79 @@ type Trade = {
   created_at: string;
 };
 
+/**
+ * Start of the current strategy configuration (S1 + S6, S2/S3 disabled).
+ * The first S6 bot trade opened 2026-06-01 (Session 43). Everything before it
+ * belongs to the S3 scalp / S2 eras that were disabled after their backtests
+ * went negative, so the default stats window starts here.
+ */
+const CURRENT_CONFIG_SINCE = "2026-06-01";
+
+/**
+ * Backtest reference numbers per strategy, shown beside the live figures so a
+ * divergence is visible without opening the archive.
+ * Source: docs/session-archive.md, Session 29-31 (26-month Binance data,
+ * 429-day window after warmup, 1.0x leverage).
+ */
+const BACKTEST_REF: Record<
+  string,
+  { winRate: number; trades: number; pf: number; note: string }
+> = {
+  S1: { winRate: 78, trades: 9, pf: 0, note: "+$87 / 429d" },
+  S6: { winRate: 46, trades: 105, pf: 1.59, note: "+$76 / 429d" },
+  S2: { winRate: 31, trades: 42, pf: 0, note: "-$30 / 429d, disabled" },
+  S3: { winRate: 29, trades: 779, pf: 0.51, note: "-$82 / 379d, disabled" },
+};
+
 export const dynamic = "force-dynamic";
 
-export default async function TradesPage() {
+export default async function TradesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ since?: string }>;
+}) {
+  const { since: sinceParam } = await searchParams;
+  const allTime = sinceParam === "all";
+  const since = allTime ? null : isIsoDate(sinceParam) ? sinceParam : CURRENT_CONFIG_SINCE;
+
   const supabase = await createClient();
 
   const { data: rows } = await supabase
     .from("trades")
     .select("*")
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(1000);
 
-  const trades = (rows ?? []) as Trade[];
+  const everything = (rows ?? []) as Trade[];
+  const trades = since
+    ? everything.filter((t) => closedAt(t) >= since)
+    : everything;
 
   const botTrades = trades.filter((t) => t.source !== "manual");
   const manualTrades = trades.filter((t) => t.source === "manual");
   const botStats = computeStats(botTrades);
   const manualStats = computeStats(manualTrades);
   const allStats = computeStats(trades);
+  const byStrategy = groupByStrategy(botTrades);
+  const hiddenCount = everything.length - trades.length;
 
   return (
     <>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Trades</h1>
-        <p className="text-sm text-muted-foreground">
-          Closed trades from the bot and manual test trades, tracked separately.
-        </p>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Trades</h1>
+          <p className="text-sm text-muted-foreground">
+            Closed trades from the bot and manual test trades, tracked separately.
+          </p>
+        </div>
+        <div className="flex items-center gap-1 rounded-md border border-border p-0.5 text-xs">
+          <FilterLink href="/trades" active={!allTime}>
+            Since current config ({CURRENT_CONFIG_SINCE})
+          </FilterLink>
+          <FilterLink href="/trades?since=all" active={allTime}>
+            All time
+          </FilterLink>
+        </div>
       </div>
 
       {/* ----- Combined stats ----- */}
@@ -82,7 +130,11 @@ export default async function TradesPage() {
           value={formatUsd(allStats.totalPnlUsd)}
           icon={<Banknote className="h-4 w-4" />}
           tone={pnlTone(allStats.totalPnlUsd)}
-          hint={`${allStats.count} closed`}
+          hint={
+            hiddenCount > 0
+              ? `${allStats.count} closed · ${hiddenCount} older hidden`
+              : `${allStats.count} closed`
+          }
         />
         <StatCard
           title="Win Rate"
@@ -110,6 +162,108 @@ export default async function TradesPage() {
         />
       </AnimateIn>
 
+      {/* ----- Per-strategy scoreboard (live vs backtest) ----- */}
+      <AnimateIn delay={50} className="mb-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Target className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-base">Strategy Scoreboard</CardTitle>
+          </div>
+          <CardDescription>
+            Live bot results per strategy
+            {since ? ` since ${since}` : " (all time)"}, with the backtest
+            reference beside each. A live win rate well under its reference
+            after 20+ trades is the signal to act.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {byStrategy.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No closed bot trades in this window.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Strategy</TableHead>
+                    <TableHead className="text-right">Trades</TableHead>
+                    <TableHead className="text-right">W / L</TableHead>
+                    <TableHead className="text-right">Win Rate</TableHead>
+                    <TableHead className="text-right">PnL</TableHead>
+                    <TableHead className="text-right">Avg R</TableHead>
+                    <TableHead className="text-right">Expectancy</TableHead>
+                    <TableHead className="text-right">Profit Factor</TableHead>
+                    <TableHead className="text-right">Max Consec. L</TableHead>
+                    <TableHead>Backtest ref</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {byStrategy.map(({ strategy, stats }) => {
+                    const ref = BACKTEST_REF[strategy];
+                    const liveWr = stats.count
+                      ? Math.round((stats.wins / stats.count) * 100)
+                      : null;
+                    const lagging =
+                      ref && liveWr !== null && stats.count >= 10 && liveWr < ref.winRate - 10;
+                    return (
+                      <TableRow key={strategy}>
+                        <TableCell>
+                          <StrategyBadge strategy={strategy} />
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {stats.count}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {stats.wins} / {stats.losses}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono text-xs ${lagging ? "text-destructive" : ""}`}
+                        >
+                          {liveWr !== null ? `${liveWr}%` : "—"}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono text-xs ${pnlClass(stats.totalPnlUsd)}`}
+                        >
+                          {formatUsd(stats.totalPnlUsd)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono text-xs ${pnlClass(stats.avgR)}`}
+                        >
+                          {stats.avgR.toFixed(2)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono text-xs ${pnlClass(stats.expectancy)}`}
+                        >
+                          {formatUsd(stats.expectancy)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {stats.profitFactor === null
+                            ? "—"
+                            : stats.profitFactor === Infinity
+                              ? "∞"
+                              : stats.profitFactor.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {stats.maxConsecLosses}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {ref
+                            ? `${ref.winRate}% WR · ${ref.trades} trades${ref.pf ? ` · PF ${ref.pf}` : ""} · ${ref.note}`
+                            : "—"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      </AnimateIn>
+
       {/* ----- Bot trades ----- */}
       <AnimateIn delay={100} className="mb-6">
       <Card>
@@ -131,17 +285,16 @@ export default async function TradesPage() {
           {botTrades.length === 0 ? (
             <EmptyState
               icon={<Receipt className="h-5 w-5" />}
-              title="No bot trades yet"
+              title="No bot trades in this window"
               description={
                 <>
-                  The bot hasn&apos;t closed a trade yet. On the first LIVE
-                  close, one row will be written here with entry/exit prices,
-                  PnL, and the confluence conditions that triggered the entry.
+                  The bot hasn&apos;t closed a trade since {since ?? "the beginning"}.
+                  Switch to &ldquo;All time&rdquo; to see earlier eras.
                 </>
               }
             />
           ) : (
-            <TradeTable trades={botTrades} showLeverage />
+            <TradeTable trades={botTrades} showLeverage showStrategy />
           )}
         </CardContent>
       </Card>
@@ -161,15 +314,15 @@ export default async function TradesPage() {
             )}
           </div>
           <CardDescription>
-            Test trades placed via the custom trade script.
+            Test trades placed via the custom trade script or the dashboard.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {manualTrades.length === 0 ? (
             <EmptyState
               icon={<Receipt className="h-5 w-5" />}
-              title="No manual trades yet"
-              description="Run test_custom_trade.ts to place a manual trade. Results will appear here."
+              title="No manual trades in this window"
+              description="Place a manual trade from the dashboard or test_custom_trade.ts. Results will appear here."
             />
           ) : (
             <TradeTable trades={manualTrades} showLeverage />
@@ -181,46 +334,87 @@ export default async function TradesPage() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function isIsoDate(v: string | undefined): v is string {
+  return !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+function closedAt(t: Trade): string {
+  return t.exit_time ?? t.created_at;
+}
+
+function strategyOf(t: Trade): string {
+  if (t.source === "manual") return "manual";
+  const s = t.entry_conditions?.strategy;
+  return typeof s === "string" && s.length > 0 ? s.toUpperCase() : "unknown";
+}
+
 type Stats = {
   count: number;
   wins: number;
   losses: number;
   totalPnlUsd: number;
   avgR: number;
+  expectancy: number;
+  profitFactor: number | null;
+  maxConsecLosses: number;
   best: number | null;
   worst: number | null;
+};
+
+const EMPTY_STATS: Stats = {
+  count: 0,
+  wins: 0,
+  losses: 0,
+  totalPnlUsd: 0,
+  avgR: 0,
+  expectancy: 0,
+  profitFactor: null,
+  maxConsecLosses: 0,
+  best: null,
+  worst: null,
 };
 
 function computeStats(trades: Trade[]): Stats {
   const closed = trades.filter(
     (t) => t.pnl_usd !== null && t.pnl_usd !== undefined,
   );
-  if (closed.length === 0) {
-    return {
-      count: 0,
-      wins: 0,
-      losses: 0,
-      totalPnlUsd: 0,
-      avgR: 0,
-      best: null,
-      worst: null,
-    };
-  }
+  if (closed.length === 0) return EMPTY_STATS;
 
   let total = 0;
   let wins = 0;
   let losses = 0;
+  let grossWin = 0;
+  let grossLoss = 0;
   let best = -Infinity;
   let worst = Infinity;
   let rSum = 0;
   let rCount = 0;
+  let streak = 0;
+  let maxStreak = 0;
 
-  for (const t of closed) {
+  // Rows arrive newest first; walk oldest -> newest for the loss streak.
+  const chronological = [...closed].sort((a, b) =>
+    closedAt(a).localeCompare(closedAt(b)),
+  );
+
+  for (const t of chronological) {
     const pnl = Number(t.pnl_usd);
     if (!Number.isFinite(pnl)) continue;
     total += pnl;
-    if (pnl > 0) wins += 1;
-    else if (pnl < 0) losses += 1;
+    if (pnl > 0) {
+      wins += 1;
+      grossWin += pnl;
+      streak = 0;
+    } else if (pnl < 0) {
+      losses += 1;
+      grossLoss += -pnl;
+      streak += 1;
+      if (streak > maxStreak) maxStreak = streak;
+    }
     if (pnl > best) best = pnl;
     if (pnl < worst) worst = pnl;
 
@@ -239,9 +433,64 @@ function computeStats(trades: Trade[]): Stats {
     losses,
     totalPnlUsd: total,
     avgR: rCount > 0 ? rSum / rCount : 0,
+    expectancy: total / closed.length,
+    profitFactor:
+      grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? Infinity : null,
+    maxConsecLosses: maxStreak,
     best: best === -Infinity ? null : best,
     worst: worst === Infinity ? null : worst,
   };
+}
+
+function groupByStrategy(
+  trades: Trade[],
+): Array<{ strategy: string; stats: Stats }> {
+  const groups = new Map<string, Trade[]>();
+  for (const t of trades) {
+    const key = strategyOf(t);
+    const list = groups.get(key) ?? [];
+    list.push(t);
+    groups.set(key, list);
+  }
+  return [...groups.entries()]
+    .map(([strategy, list]) => ({ strategy, stats: computeStats(list) }))
+    .sort((a, b) => a.strategy.localeCompare(b.strategy));
+}
+
+function FilterLink({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`rounded px-2 py-1 ${
+        active
+          ? "bg-primary/15 font-medium text-primary"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function StrategyBadge({ strategy }: { strategy: string }) {
+  const live = strategy === "S1" || strategy === "S6";
+  return (
+    <Badge
+      variant={live ? "default" : "outline"}
+      className="font-mono text-[10px]"
+      title={live ? "Enabled on the VPS bot" : "Not in the current config"}
+    >
+      {strategy}
+    </Badge>
+  );
 }
 
 function StatCard({
@@ -283,13 +532,22 @@ function StatCard({
   );
 }
 
-function TradeTable({ trades, showLeverage }: { trades: Trade[]; showLeverage?: boolean }) {
+function TradeTable({
+  trades,
+  showLeverage,
+  showStrategy,
+}: {
+  trades: Trade[];
+  showLeverage?: boolean;
+  showStrategy?: boolean;
+}) {
   return (
     <div className="overflow-x-auto">
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Closed</TableHead>
+            {showStrategy && <TableHead>Strategy</TableHead>}
             <TableHead>Symbol</TableHead>
             <TableHead>Side</TableHead>
             {showLeverage && <TableHead className="text-right">Lev</TableHead>}
@@ -304,13 +562,20 @@ function TradeTable({ trades, showLeverage }: { trades: Trade[]; showLeverage?: 
         <TableBody>
           {trades.map((t) => {
             const leverage = t.entry_conditions?.leverage;
+            const closedIso = closedAt(t);
             return (
               <TableRow key={t.id}>
-                <TableCell className="whitespace-nowrap font-mono text-xs">
-                  {t.exit_time
-                    ? formatTime(t.exit_time)
-                    : formatTime(t.created_at)}
+                <TableCell
+                  className="whitespace-nowrap font-mono text-xs"
+                  title={closedIso}
+                >
+                  {formatDateTime(closedIso)}
                 </TableCell>
+                {showStrategy && (
+                  <TableCell>
+                    <StrategyBadge strategy={strategyOf(t)} />
+                  </TableCell>
+                )}
                 <TableCell className="font-medium">{t.symbol}</TableCell>
                 <TableCell>
                   <Badge

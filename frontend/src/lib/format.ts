@@ -70,3 +70,34 @@ export function formatTime(iso: string | null | undefined): string {
     hour12: false,
   });
 }
+
+/**
+ * Null-safe fixed-digit number. Indicator fields can arrive as null when the
+ * bot's warmup history is shorter than the indicator lookback (NaN -> null in
+ * JSON), so every readout must tolerate it instead of calling .toFixed on null.
+ */
+export function num(
+  value: number | string | null | undefined,
+  digits = 1,
+): string {
+  if (value === null || value === undefined) return "—";
+  const n = typeof value === "string" ? Number(value) : value;
+  if (!Number.isFinite(n)) return "—";
+  return n.toFixed(digits);
+}
+
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return (
+    d.toLocaleString("en-US", {
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "UTC",
+    }) + " UTC"
+  );
+}
