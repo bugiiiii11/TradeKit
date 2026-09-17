@@ -1,7 +1,43 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-46). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-46, 48). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+---
+
+## What Was Done (Session 48) — P0 again: WS loop dead 54 days (S44 fix had one hole) — recovered, hardened, made visible
+
+*(Session 47 was hooks-only: `d772f58` Bash-level secret-exfil guards + native deny list, `95295f3` CLAUDE.md refresh. No bot changes.)*
+
+### Deep dive: bot silently dead since 2026-06-27 08:34 UTC (2 days after the S46 restart)
+pm2: online, 55D uptime, ↺=43 (unchanged since S46) — looked healthy. Log file: only webhook lines, zero `Bar close`, error log empty since Jun 29. All pm2 log history before Aug 17 destroyed by `pm2-logrotate retain=3`; forensics reconstructed from Supabase `bot_logs`:
+- `08:30:00` last good bar close → `08:34:08` `[WS] No message in 68s — reconnect attempt 1/10` (Hyperliquid 502) → teardown took exactly 20s (S44 timeouts *worked*) → gap-fill 502 → `08:34:28` `[WS] Connecting to Hyperliquid WebSocket...` → **silence for 54 days.** No attempt 2/10, no timeout error, no `process.exit`.
+- Collateral: Supabase Realtime command channel `closed` on Jun 28 and never resubscribed — frontend kill switch was dead too.
+- The 2h Status Digest posted `Status: ACTIVE` to Discord the entire time (it had no bar-close info).
+
+**Root cause:** [candle-consumer.ts:178](src/ws/candle-consumer.ts#L178) — the *error-path* `await transport[Symbol.asyncDispose]()` inside `subscribe()` was the one network await S44 did not wrap in `withTimeout`. Subscribe timed out → catch → dispose of a half-open socket hung forever → `subscribe()` never threw → `reconnect()` never reached `finally` → `reconnecting` pinned `true` → heartbeat silently returned forever. Identical deadlock class to S44, one level deeper.
+
+### Fixes (`dbbe9c6`, deployed + verified live)
+1. **Guarded the error-path dispose** with `withTimeout` (the direct bug).
+2. **Reconnect watchdog** — heartbeat tracks `reconnectingSince`; if `reconnecting` has been true > 3 min, `process.exit(1)` → pm2 restart → clean warmup. `setInterval` keeps firing even when a prior callback's await never settles, so no future hang anywhere in the (re)connect path can silence it. Ends the whack-a-mole class.
+3. **Hydration SL/TP classification by order type** — `TriggerOrderInfo.isStopLoss` from `frontendOpenOrders().orderType` (`"Stop Market"` vs `"Take Profit Market"`), replacing trigger-price-vs-entry in [main-headless.ts](src/main-headless.ts). A stop trailed into profit now hydrates as the SL and keeps trailing (S46 Watchlist row 3 closed).
+4. **Command channel auto-resubscribe** on `CLOSED` (30s backoff, `_stopped` guard so SIGTERM shutdown doesn't loop).
+
+Restart: warmup clean, WS subscribed, live `[WS] Bar closed` confirmed against the exchange clock. ~19h later still current.
+
+### Visibility layer (`44baa34`) — never again blind
+- **`deploy/deadman-check.cjs`** — cron on the VPS (every 15 min, *outside* pm2/the bot process) reads the newest `[WS] Bar closed` row from Supabase `bot_logs`; >35 min old → Discord `#errors` alert, re-alert every 2h, recovery notice. State file `~/.tradekit-deadman.json`. Log: `~/.pm2/logs/deadman.log`. Tested end-to-end (forced alert + recovery posted).
+- **Status digest** now leads with `Last bar close: Nmin ago` and mirrors a red alert to `#errors` when >30 min.
+- **`pm2-logrotate retain` 3 → 30** so the next forensics don't depend on Supabase.
+
+### VPS is now a clean git checkout
+Deploys were scp-over-`bb3171e` (git log lied about the running version). Converted: backed up live `trades/trade_log.json` (667 lines; upstream stub is 1 line) to `~/trade_log.backup.20260820-195526.json`, `git checkout -- src/`, `git pull --ff-only` → `44baa34`, restored ledger byte-identical, `git update-index --skip-worktree trades/trade_log.json`. Content diff before conversion confirmed the running files matched the commits exactly. **Future deploys: `git pull` on the box, then `pm2 restart trading-bot`.**
+
+### Money
+- S1 SHORT closed **2026-07-01** via the S46 manual $61,050 stop (oid `479697922460`), filled $61,220 → **+$4.27 realized**. Last fill on the account.
+- Flat since. Account value **$381.56**, all withdrawable; reconciles to the cent with prior ledger. Zero $ lost to the outage — but every S1/S6 signal Jun 27 → Aug 20 was skipped while BTC moved ~$62k → ~$69k.
+
+---
 
 ---
 
