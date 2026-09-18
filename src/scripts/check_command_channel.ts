@@ -13,6 +13,10 @@
  * Healthy looks like: a handful of rows per day, mostly at bot restarts.
  * Flapping looks like: ~120 closes/hour, evenly spaced 30s apart.
  *
+ * The verdict is anchored on the NEWEST close, not just the 2h rate: right
+ * after a fix is deployed the window is still full of pre-restart rows, and
+ * reporting FLAPPING then sent S52 looking for a bug that was already fixed.
+ *
  * Usage: npx ts-node src/scripts/check_command_channel.ts
  */
 
@@ -24,6 +28,8 @@ import { getSupabase } from "../db/supabase";
 const WINDOW_HOURS = 2;
 /** Above this many closes per hour the channel is cycling, not recovering. */
 const FLAP_THRESHOLD_PER_HOUR = 6;
+/** A flap is only CURRENT if it is still producing closes this recently. */
+const STILL_FLAPPING_MINUTES = 10;
 
 async function main(): Promise<void> {
   const client = getSupabase();
@@ -64,6 +70,19 @@ async function main(): Promise<void> {
   }
 
   console.log(`[Commands] Newest line: ${all[0].ts}  ${all[0].message}`);
+
+  const newestCloseAgeMin = closes.length
+    ? (Date.now() - Date.parse(closes[0].ts)) / 60_000
+    : Infinity;
+
+  if (perHour >= FLAP_THRESHOLD_PER_HOUR && newestCloseAgeMin > STILL_FLAPPING_MINUTES) {
+    console.log(`[Commands] Newest close: ${newestCloseAgeMin.toFixed(0)} min ago`);
+    console.log(`
+  VERDICT: RECOVERED - the window still holds ${closes.length} closes, but none`);
+    console.log(`  in the last ${newestCloseAgeMin.toFixed(0)} minutes. That is what a just-deployed fix looks like;`);
+    console.log(`  re-run once the window has rolled past the restart.`);
+    return;
+  }
 
   if (perHour >= FLAP_THRESHOLD_PER_HOUR) {
     const gaps: number[] = [];

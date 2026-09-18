@@ -64,8 +64,9 @@ let _resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
  * synchronously fires that channel's own subscribe callback with status CLOSED
  * (verified against @supabase/realtime-js 2.103.0), so without this flag our
  * own teardown is indistinguishable from the server dropping us - and arms yet
- * another resubscribe. That was the S52 flap: one genuine close on 2026-08-21
- * latched the bot into killing its own healthy channel every 30s, forever.
+ * another resubscribe. That was the S52 flap: one genuine close on 2026-08-22
+ * 21:39Z latched the bot into killing its own healthy channel every 30s for 27
+ * days, forever, with no way to self-heal.
  */
 let _tearingDown = false;
 

@@ -12,51 +12,6 @@
 
 ---
 
-## What Was Done (Session 50) — Polish audit + Sprint 1 shipped (market-data fix, strategy instrument)
-
-*(Session 49 was docs-only: `977a9aa` Rein x TradeKit assessment. This machine was 84 commits behind and was fast-forwarded first.)*
-
-- **`/polish scan` audit written:** `docs/polish/tradekit-polish-audit.md` — 16 items, 5 sprints, none Risk-H. Root causes: (A1) market-data page crashed on `.toFixed(null)` because the bot warms up 250 daily bars but 1D PMARP/BBWP need 350/252, NaN -> null in Supabase JSON; (A2) the -$25.74 / 29% headline sums the dead S3/S2 eras with the live S1+S6 set and there was no per-strategy instrument; (G3) every backtest is in-sample — no walk-forward split exists.
-- **Sprint 1 shipped + pushed (`4647567`, frontend only, bot untouched):** null-safe market-data page; trades page with date column, strategy column, per-strategy scoreboard (live vs backtest reference, red when >= 10 trades and 10 pts under), default window "since current config" 2026-06-01 with All-time toggle; strategies page joined on `entry_conditions.strategy`, S6 card (in-page fallback, DB row optional — SQL in the record), LIVE/DISABLED badges. Verified: tsc, eslint, `next build` all 0. Record: `docs/polish/tradekit-polish.md`.
-- **Owner rules recorded:** push after every sprint; list blockers before the next phase.
-- **Not done / not touched:** no VPS liveness check this session (Watchlist rows 1-2 still due); Supabase MCP unauthorised (row shapes inferred from `src/db/*.ts`); no browser smoke (pages behind login).
-
-## What Was Done (Session 51) — Sprint 1 was never deployed; Sprint 2 shipped; two live-bot findings
-
-**The session's headline: Sprint 1 had been pushed but never deployed.** The Vercel `trade-kit` project had
-no connected Git repo, so every deploy in its 157-day history was a manual CLI deploy. S50 treated "pushed"
-as "shipped"; the live site served a 27-day-old build, which is why market-data still 500'd. Owner reconnected
-GitHub in the dashboard mid-session; all four pushes after that auto-deployed. CLAUDE.md's "auto-deploys on
-push to `main`" line was simply false and is now corrected.
-
-- **Sprint 1 verified** on all three pages, plus one defect found and fixed: the G2 card sort comparator had
-  `a`/`b` swapped, so DISABLED strategies sorted ahead of LIVE (`da62d07`).
-- **Sprint 2 shipped (`a6cd77f`) — G3 + G5, backtests only, no live change.** New `src/scripts/backtest_oos.ts`
-  (loads once, splits, replays a 5-config matrix on both windows); `--train-until` / `--test-from` on
-  `backtest_binance.ts`; regime filter generalised off the hardcoded `"S3"` via `regimeFilterStrategies` +
-  `regimeBlockWhen` (defaults preserve every archived S3 number).
-- **Two engine bugs found while running it, both of which produced fake results.** (1) The regime filter never
-  reached S6 — S6 bypasses the confluence scorer and enters via the independent path at `engine.ts:477`, so the
-  first run returned "S6 + regime" byte-identical to "S6 only". **Any filter added to the confluence block will
-  no-op on S6 the same way.** (2) The train window silently collapsed to 148 days: `aligner.ts` needs a warm
-  *daily* PMARP (~370 daily bars), so ~1 year of any download is eaten as warmup — 31 months downloaded gave 19
-  usable. Needs `--months=55`.
-- **Result — the live S1+S6 set holds up out-of-sample:** PF 1.99 on 182 test trades (2025-07-01 → 2026-09-17),
-  decaying mildly from 2.33 in an 878-day train window. Full table + caveats in `docs/polish/tradekit-polish.md`.
-- **Owner decision: do NOT ship the regime filter on S6.** It shows PF 8.33 / Sharpe 8.05, but on 38 trades that
-  is an artifact, and it cuts trades 79% to earn $39 *less*.
-- **Live bot checked without ssh** (`5d0d1c3`) — new `src/scripts/check_ws_liveness.ts` reads the same Supabase
-  signal as the dead-man cron, clocked against Hyperliquid rather than the local machine. Verdict ALIVE: 24 bar
-  closes in 6h, on cadence.
-- **S46 trailing-oid fix VALIDATED on real trades** — 2026-09-14 shows four consecutive
-  `Stop-loss modified: oid=X → Y` (Y ≠ X) ratcheting $77541.5 → $77831.6; last `Failed to modify` was
-  2026-06-25, pre-fix. Watchlist row 2's premise ("no position since Jul 1") was stale — the bot resumed
-  trading in late August.
-- **New defect found: the command channel flaps every 30s** (`a5958c0`, see Watchlist). Kill switch degraded,
-  not dead. CLAUDE.md had this path listed as never observed firing.
-- **Untracked April files kept deliberately** (5 backtest logs, `image.png`, `src/docs/analysis-and-recommendations.md`)
-  — owner wants them for comparison against the new out-of-sample numbers. Not junk; do not clean up.
-
 ## What Was Done (Session 52) — Flap fix deployed; VPS reachable from the desktop; Flash cross-check
 
 *Ran on the desktop (the machine with the VPS key), starting from a clone 10 commits behind — `/start` reported "up to date" because it never fetched. S50/S51 (laptop) were invisible until a push was rejected. Lesson folded into `/start` (fetch first).*
@@ -68,6 +23,18 @@ push to `main`" line was simply false and is now corrected.
 - **Hydration on a real restart:** open position is a **manual** web-UI long (0.0026 BTC @ $76,873, 10x, SL $75,800, 1 TP, opened 2026-09-17 17:28Z) — hydrated as `[external (skip exit logic)]`, correct. Bankroll hydrated $349.56. In-profit *bot* position hydration still unexercised.
 - **Flash cross-check** (briefs in `c:/work/Flash/___temp/tradekit-brief-2026-09-18.md` + `flash-reply-…md`): S5 `high` is crash-only by design (needs >10 imminent AND >$50M imminent debt; Sept peak $5.87M) — 4 months of `medium` is expected. Flash recommends grading severity on our side from the hourly heartbeat's `estimated_impact_usd`. Box hygiene from Flash: stray `pm2 monit trading-bot` PID 311582 running 142 days; webhook binds `*:3456` with an iptables ACCEPT — only the OCI VCN keeps it private; bind `127.0.0.1` (tunnel arrives on localhost). Port-3456 contract must not change: `GET /health`→200, `POST /webhook/cascade`→`{accepted:true}`.
 - **S51's `check_command_channel.ts` reports FLAPPING for ~2h after a fix** — fixed 2h window, pre-restart rows dominate. Trust rows-since-restart instead until it gets a since-last-active mode.
+
+**Laptop lane, same day (ran in parallel; commits `35e4ce4` → `b9a252d`):**
+
+- **Found the command flap independently and fixed it** (`35e4ce4`, the commit the desktop then deployed). Proved it against live Supabase both ways: unpatched, one induced close produced closes at +9/+39/+69/+99/+129s; patched, one close → one recovery → stable. Verified from here after the deploy: **0 command rows in 2h**, down from 956.
+- **Root-caused the S6 live-vs-backtest divergence — and the answer invalidated every backtest this project has ever run** (`71d3422`). `aggregator.ts` timestamps buckets by START, so `aligner.ts` picking "timestamp <= now" attached the **still-forming** higher-TF bar and handed the engine its final close: up to 45min/3h45m/23h45m of future data on 1H/4H/1D, every bar, every strategy. Smoking gun: 27/27 S6 entries landed exactly on the hour (fixed: 0/29; live: 4/22). The live bot was never affected — `aggregate()` drops an incomplete final bucket.
+- **Both halves of the divergence dissolved.** "Half the trade rate" was calendar days including the 66-day S48 outage — over the 56.5 days the bot was actually alive it is 22 live vs 27 backtest. The win-rate gap fell from 16 points to 6 on n=22, i.e. noise.
+- **Corrected matrix run and recorded** (`docs/polish/s52-corrected-matrix.md`; `backtest_oos.ts` extended with S2/S3/all-four scenarios + `--legacy-lookahead`, which reproduces S51's published figures **exactly** — confirming the alignment fix is the only variable). Out-of-sample: live set S1+S6 **PF 1.99 → 1.03** (+$265.74 → +$8.88). S6+regime **7.28 → 0.82**, i.e. a fitted filter (in-sample 1.45) — S51's rejection was right for the wrong reason. S3 stays dead, S2 stays parked. S1 alone is the only config positive in both windows and beats the live set on PF/Sharpe/DD, but on 32 trades in 3.6 years.
+- **Owner decision: keep S1+S6 running for now.** Nothing on the bot was touched. Leverage (row 6) stays frozen — multiplying variance around a zero mean is the one clearly wrong move.
+- **Frontend row 14 shipped** (`b9a252d`): the trades scoreboard was flagging live S6 red against pre-fix references (S6 46% WR / PF 1.59) that never existed; replaced with the corrected out-of-sample set, plus a `thin` marker that suppresses the flag for S1's 13-trade reference. Backtests page banners any stored run from before 2026-09-18. Gates: tsc/eslint/build 0.
+- **Row 3(b) closed** — `check_command_channel.ts` now anchors its verdict on the newest close, so a just-deployed fix reads RECOVERED instead of FLAPPING. Onset date corrected to the desktop's on-box finding (2026-08-22 21:39Z).
+- ⚠️ **`SUPABASE_SERVICE_ROLE_KEY` leaked into a session transcript** (a Realtime debug logger printed the socket URL, which carries `?apikey=`). Owner deferred rotation — now handoff row 13. Not exposed anywhere else.
+- ⚠️ **Branch `keep/s52-commands-backoff` is not on origin and not on this laptop.** If it only ever existed on the desktop, row 3(a) dies with that working tree — push it.
 
 ## Watchlist
 
@@ -97,7 +64,7 @@ push to `main`" line was simply false and is now corrected.
 | 10 | **S2 / S3 / S7 re-evaluation** | low | All parked. Revisit only on logic rework. |
 | 11 | **Optional: stop tracking `trades/trade_log.json` in git** | low | Live per-bot data (VPS 667 lines vs repo stub). Currently `skip-worktree` on the VPS. Cleaner: `.gitignore` + a committed `trade_log.example.json`. Not urgent. |
 | 13 | **Rotate `SUPABASE_SERVICE_ROLE_KEY`** — flagged S52, deferred by owner | med | Leaked into a Claude session transcript on 2026-09-18: a Realtime debug logger printed the socket URL, which carries `?apikey=sb_secret_…`. The key bypasses ALL RLS. Not known to be exposed anywhere else (never committed; `.env` untouched). Rotate in the Supabase dashboard → update VPS `.env` + local `.env` → `pm2 restart trading-bot`. Do not enable that logger again. |
-| 14 | **Stored/displayed backtest numbers are pre-fix** | med | Every `backtest_results` row in Supabase, the frontend backtests page, and the per-strategy "backtest reference" on the trades scoreboard (S50 Sprint 1) were produced under lookahead. The scoreboard now flags live WR as underperforming against a reference that never existed. Either re-run and replace, or label the legacy rows. |
+| 14 | ~~Stored/displayed backtest numbers are pre-fix~~ **— shipped S52** | low | Trades scoreboard now references the corrected out-of-sample window; backtests page banners any run from before 2026-09-18. Remaining: the `backtest_runs` rows themselves are still pre-fix data — re-run and replace when convenient. |
 | 12 | **Neo's VPS access — Martin's decision** | med | Checks he asked for are done (S52). Flash's position: no third-party shell on OCI2 (Sui wallet keys under `/home/ubuntu/flash/`). If access is truly needed: a separate user with no read access to `/home/ubuntu/flash/*`, key sent directly by Neo — never sourced from repo history. |
 
 ## Session Summary
@@ -108,4 +75,4 @@ push to `main`" line was simply false and is now corrected.
 | 49 | 2026-08-21 | Docs only: Rein x TradeKit assessment |
 | 50 | 2026-09-17 | Polish audit + Sprint 1 (thought shipped; was not deployed) |
 | 51 | 2026-09-17 | Vercel never deployed Sprint 1; Sprint 2 out-of-sample; command-channel flap found |
-| 52 | 2026-09-18 | Flap fix deployed to VPS; on-box Tier-0 checks green; SSH solved (desktop key); Flash cross-check |
+| 52 | 2026-09-18 | Flap fix deployed + on-box Tier-0 green + Flash cross-check (desktop); lookahead found in the backtest aligner — every archived number inflated, corrected matrix, scoreboard fixed (laptop) |
