@@ -59,27 +59,57 @@ let _lastRealtimeStatus: string | null = null;
 let _realtimeErrorCount = 0;
 let _stopped = false;
 let _resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+let _resubscribeAttempts = 0;
+let _subscribedAt = 0;
 
-const RESUBSCRIBE_DELAY_MS = 30_000;
+const RESUBSCRIBE_BASE_DELAY_MS = 30_000;
+const RESUBSCRIBE_MAX_DELAY_MS = 5 * 60_000;
+/** A subscription that stayed up this long counts as healthy — backoff resets. */
+const STABLE_SUBSCRIPTION_MS = 10 * 60_000;
+
+function resubscribeDelayMs(): number {
+  return Math.min(
+    RESUBSCRIBE_BASE_DELAY_MS * 2 ** _resubscribeAttempts,
+    RESUBSCRIBE_MAX_DELAY_MS,
+  );
+}
+
+/**
+ * Removes the current channel. `_channel` is cleared BEFORE removeChannel so
+ * the old channel's subscribe-callback (which realtime-js fires with CLOSED on
+ * unsubscribe) sees `_channel !== channel` and ignores itself. Missing that
+ * ordering is what caused the S50 30s teardown loop.
+ */
+async function teardownChannel(): Promise<void> {
+  const old = _channel;
+  _channel = null;
+  _lastRealtimeStatus = null;
+  if (!old) return;
+  const supabase = getSupabase();
+  if (supabase) {
+    try { await supabase.removeChannel(old); } catch { /* ignore */ }
+  }
+}
 
 /**
  * A CLOSED channel never comes back on its own (Jun 28 2026: channel closed
  * and the kill switch was dead for 7+ weeks). Tear down and re-run the full
  * startCommandSubscription — the startup sweep also catches any commands that
  * arrived while the channel was down, and the claim pattern makes re-sweeping
- * safe.
+ * safe. Exponential backoff (30s → 5 min) so a persistently failing channel
+ * can't flood bot_logs (Aug 22 → Sep 18 2026: ~11.5k rows/day at a fixed 30s).
  */
 function scheduleResubscribe(ctx: CommandHandlerContext, botSource?: string): void {
   if (_stopped || _resubscribeTimer) return;
+  const delay = resubscribeDelayMs();
+  console.warn(
+    `[Commands] Resubscribing in ${delay / 1000}s (attempt ${_resubscribeAttempts + 1})`
+  );
   _resubscribeTimer = setTimeout(async () => {
     _resubscribeTimer = null;
     if (_stopped) return;
-    const supabase = getSupabase();
-    if (supabase && _channel) {
-      try { await supabase.removeChannel(_channel); } catch { /* ignore */ }
-    }
-    _channel = null;
-    _lastRealtimeStatus = null;
+    _resubscribeAttempts++;
+    await teardownChannel();
     console.log("[Commands] Resubscribing to command channel...");
     try {
       await startCommandSubscription(ctx, botSource);
@@ -87,7 +117,7 @@ function scheduleResubscribe(ctx: CommandHandlerContext, botSource?: string): vo
       console.error("[Commands] Resubscribe failed — will retry:", err);
       scheduleResubscribe(ctx, botSource);
     }
-  }, RESUBSCRIBE_DELAY_MS);
+  }, delay);
 }
 
 /**
@@ -146,7 +176,7 @@ export async function startCommandSubscription(
   }
 
   // 2. Realtime subscription.
-  _channel = supabase
+  const channel = supabase
     .channel("bot_commands_stream")
     .on(
       "postgres_changes",
@@ -159,32 +189,49 @@ export async function startCommandSubscription(
           console.error(`[Commands] processCommand threw for ${row.id}:`, err)
         );
       }
-    )
-    .subscribe((status, err) => {
-      if (status === "SUBSCRIBED") {
-        const msg = _realtimeErrorCount > 0
-          ? `[Commands] Realtime subscription active (recovered after ${_realtimeErrorCount} retries)`
-          : "[Commands] Realtime subscription active";
-        console.log(msg);
-        _realtimeErrorCount = 0;
-        _lastRealtimeStatus = status;
-      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        _realtimeErrorCount++;
-        if (_lastRealtimeStatus !== status) {
-          console.error(
-            `[Commands] Realtime subscription ${status}`,
-            err ? `: ${err.message}` : ""
-          );
-        }
-        _lastRealtimeStatus = status;
-      } else if (status === "CLOSED") {
-        if (!_stopped) {
-          console.warn(`[Commands] Realtime subscription closed — resubscribing in ${RESUBSCRIBE_DELAY_MS / 1000}s`);
-          scheduleResubscribe(ctx, botSource);
-        }
-        _lastRealtimeStatus = status;
+    );
+  _channel = channel;
+
+  channel.subscribe((status, err) => {
+    // Stale callback from a channel we already replaced or tore down —
+    // realtime-js fires CLOSED on unsubscribe. Acting on it here re-armed the
+    // resubscribe timer against a healthy channel every 30s (S50).
+    if (_channel !== channel) return;
+
+    if (status === "SUBSCRIBED") {
+      const msg = _realtimeErrorCount > 0
+        ? `[Commands] Realtime subscription active (recovered after ${_realtimeErrorCount} retries)`
+        : "[Commands] Realtime subscription active";
+      console.log(msg);
+      _realtimeErrorCount = 0;
+      _subscribedAt = Date.now();
+      _lastRealtimeStatus = status;
+    } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+      _realtimeErrorCount++;
+      if (_lastRealtimeStatus !== status) {
+        console.error(
+          `[Commands] Realtime subscription ${status}`,
+          err ? `: ${err.message}` : ""
+        );
       }
-    });
+      _lastRealtimeStatus = status;
+    } else if (status === "CLOSED") {
+      if (!_stopped && _lastRealtimeStatus !== status) {
+        // A subscription that held for a while was healthy — don't let one
+        // real close inherit backoff from an old failure streak.
+        if (_subscribedAt && Date.now() - _subscribedAt > STABLE_SUBSCRIPTION_MS) {
+          _resubscribeAttempts = 0;
+        }
+        console.warn(
+          `[Commands] Realtime subscription closed ` +
+            `(socket: ${supabase.realtime.connectionState()}, ` +
+            `held ${_subscribedAt ? Math.round((Date.now() - _subscribedAt) / 1000) : 0}s)`
+        );
+        scheduleResubscribe(ctx, botSource);
+      }
+      _lastRealtimeStatus = status;
+    }
+  });
 }
 
 /**
@@ -197,12 +244,7 @@ export async function stopCommandSubscription(): Promise<void> {
     clearTimeout(_resubscribeTimer);
     _resubscribeTimer = null;
   }
-  if (!_channel) return;
-  const supabase = getSupabase();
-  if (supabase) {
-    await supabase.removeChannel(_channel);
-  }
-  _channel = null;
+  await teardownChannel();
 }
 
 /**
