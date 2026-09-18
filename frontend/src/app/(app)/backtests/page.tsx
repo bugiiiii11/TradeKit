@@ -6,6 +6,14 @@ import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Date the multi-TF lookahead was fixed (commit 71d3422). Every stored run
+ * generated before this used an aligner that handed the engine the
+ * still-forming higher-TF bar -- up to 45min/3h45m/23h45m of future data on
+ * 1H/4H/1D -- so its PF, win rate and PnL are not achievable.
+ */
+const LOOKAHEAD_FIX_AT = "2026-09-18";
+
 // ---------------------------------------------------------------------------
 // Load runs from Supabase backtest_runs table
 // ---------------------------------------------------------------------------
@@ -66,6 +74,7 @@ async function loadRuns(): Promise<BacktestRun[]> {
 
 export default async function BacktestsPage() {
   const runs = await loadRuns();
+  const inflated = runs.filter(r => r.generatedAt < LOOKAHEAD_FIX_AT).length;
 
   return (
     <>
@@ -75,6 +84,25 @@ export default async function BacktestsPage() {
           Historical strategy replay on Hyperliquid candle data. Each tab is one run.
         </p>
       </div>
+
+      {inflated > 0 && (
+        <div className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+          <p className="text-sm font-medium text-destructive">
+            {inflated === runs.length ? "These runs are" : `${inflated} of these runs are`}{" "}
+            inflated by lookahead — do not read them as a forecast.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Anything generated before {LOOKAHEAD_FIX_AT} was replayed against the
+            still-forming 1H/4H/1D bar, i.e. up to 45min / 3h45m / 23h45m of future
+            data on every bar. Corrected out-of-sample numbers for the live set:
+            PF 1.03, not 1.99. See{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+              docs/polish/s52-corrected-matrix.md
+            </code>
+            .
+          </p>
+        </div>
+      )}
 
       {runs.length === 0 ? (
         <Card>

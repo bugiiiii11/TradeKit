@@ -59,17 +59,29 @@ const CURRENT_CONFIG_SINCE = "2026-06-01";
 /**
  * Backtest reference numbers per strategy, shown beside the live figures so a
  * divergence is visible without opening the archive.
- * Source: docs/session-archive.md, Session 29-31 (26-month Binance data,
- * 429-day window after warmup, 1.0x leverage).
+ *
+ * Source: docs/polish/s52-corrected-matrix.md -- the OUT-OF-SAMPLE window
+ * (2025-07-01 -> 2026-09-17, 444d), which is the only honest comparison for
+ * live results and overlaps the live trading period.
+ *
+ * These replace the Session 29-31 figures (S1 78% WR, S6 46% WR, +$87/+$76).
+ * Those were produced before commit 71d3422, when the backtest aligner fed the
+ * engine the still-forming higher-TF bar -- up to 45min/3h45m/23h45m of future
+ * data on 1H/4H/1D. Every number it ever produced was inflated, so the
+ * scoreboard was flagging live S6 as underperforming a reference that never
+ * existed. Do not restore them.
+ *
+ * `thin` marks a reference with too few trades to judge anything against; the
+ * lagging highlight is suppressed for those.
  */
 const BACKTEST_REF: Record<
   string,
-  { winRate: number; trades: number; pf: number; note: string }
+  { winRate: number; trades: number; pf: number; note: string; thin?: boolean }
 > = {
-  S1: { winRate: 78, trades: 9, pf: 0, note: "+$87 / 429d" },
-  S6: { winRate: 46, trades: 105, pf: 1.59, note: "+$76 / 429d" },
-  S2: { winRate: 31, trades: 42, pf: 0, note: "-$30 / 429d, disabled" },
-  S3: { winRate: 29, trades: 779, pf: 0.51, note: "-$82 / 379d, disabled" },
+  S1: { winRate: 31, trades: 13, pf: 1.3, note: "+$13 / 444d OOS", thin: true },
+  S6: { winRate: 39, trades: 198, pf: 1.01, note: "+$3 / 444d OOS" },
+  S2: { winRate: 44, trades: 71, pf: 1.13, note: "+$11 / 444d OOS, disabled" },
+  S3: { winRate: 29, trades: 839, pf: 0.48, note: "-$90 / 444d OOS, disabled" },
 };
 
 export const dynamic = "force-dynamic";
@@ -173,8 +185,11 @@ export default async function TradesPage({
           <CardDescription>
             Live bot results per strategy
             {since ? ` since ${since}` : " (all time)"}, with the backtest
-            reference beside each. A live win rate well under its reference
-            after 20+ trades is the signal to act.
+            reference beside each. References are out-of-sample (444d) on the
+            corrected alignment — every pre-S52 backtest number was inflated by
+            lookahead. A live win rate well under its reference after 20+ trades
+            is the signal to act; references marked thin are too small to judge
+            against.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -205,8 +220,14 @@ export default async function TradesPage({
                     const liveWr = stats.count
                       ? Math.round((stats.wins / stats.count) * 100)
                       : null;
+                    // A thin reference (S1: 13 trades in 444 days) cannot tell
+                    // you anything about a live win rate, so never flag against it.
                     const lagging =
-                      ref && liveWr !== null && stats.count >= 10 && liveWr < ref.winRate - 10;
+                      ref &&
+                      !ref.thin &&
+                      liveWr !== null &&
+                      stats.count >= 10 &&
+                      liveWr < ref.winRate - 10;
                     return (
                       <TableRow key={strategy}>
                         <TableCell>
@@ -250,7 +271,7 @@ export default async function TradesPage({
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {ref
-                            ? `${ref.winRate}% WR · ${ref.trades} trades${ref.pf ? ` · PF ${ref.pf}` : ""} · ${ref.note}`
+                            ? `${ref.winRate}% WR · ${ref.trades} trades${ref.pf ? ` · PF ${ref.pf}` : ""} · ${ref.note}${ref.thin ? " · thin" : ""}`
                             : "—"}
                         </TableCell>
                       </TableRow>
