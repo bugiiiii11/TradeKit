@@ -1,5 +1,10 @@
 # TradeKit -- polish record
 
+> **S52 correction: every backtest number in this document is inflated.** The multi-TF aligner fed the
+> engine the still-forming higher-TF bar (up to 45min/3h45m/23h45m of future data on 1H/4H/1D) until
+> commit `71d3422`. Sprint 2's headline "PF 1.99 out-of-sample" is PF 1.03 corrected. Re-run and
+> re-decisions: `docs/polish/s52-corrected-matrix.md`.
+
 Audit: `docs/polish/tradekit-polish-audit.md`. One section per shipped sprint, appended in order.
 Constraint (every sprint): the VPS bot trades real money; bot-side changes need a deliberate restart
 window (handoff row 1). Frontend never touches the bot. **Correction (S51): Vercel does NOT auto-deploy

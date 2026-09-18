@@ -23,6 +23,8 @@
  *   --test-from   <YYYY-MM-DD>  Start of test window, inclusive (default: 2025-07-01)
  *   --pmarp-period   <n>        (default: 20 — the live value)
  *   --pmarp-lookback <n>        (default: 350 — the live value)
+ *   --legacy-lookahead          Re-align with the pre-S52 lookahead bug, to reproduce
+ *                               the archived (inflated) numbers for comparison.
  *
  * Both windows start from the same bankroll so their PnL is comparable rather than
  * compounded end to end.
@@ -90,6 +92,11 @@ function describe(w: Aligned): string {
   return `${a} → ${b} (${windowDays(w)}d, ${w.length} bars)`;
 }
 
+/**
+ * Replays one scenario. The strategy modules log a diagnostic line per bar
+ * (S1/S2/S3-diag); across a 9-scenario matrix that is millions of lines, so
+ * stdout is muted for the duration of the replay only.
+ */
 function run(w: Aligned, sc: Scenario, bankroll: number, marginPct: number): WindowStats {
   const config: BacktestConfig = {
     days: windowDays(w),
@@ -100,7 +107,14 @@ function run(w: Aligned, sc: Scenario, bankroll: number, marginPct: number): Win
     regimeFilterStrategies: sc.regimeFilterStrategies,
     regimeBlockWhen: sc.regimeBlockWhen,
   };
-  const { stats } = runBacktest(w, config);
+  const origLog = console.log;
+  console.log = () => {};
+  let stats;
+  try {
+    ({ stats } = runBacktest(w, config));
+  } finally {
+    console.log = origLog;
+  }
   return {
     trades: stats.totalTrades,
     winRate: stats.winRate,
@@ -130,6 +144,7 @@ async function main(): Promise<void> {
   const dataDir = getFlag("data-dir", path.resolve(process.cwd(), "data/bt-data"));
   const pmarpPeriod = getNumFlag("pmarp-period", 20);
   const pmarpLookback = getNumFlag("pmarp-lookback", 350);
+  const legacyLookahead = process.argv.includes("--legacy-lookahead");
   const trainUntilMs = parseDate("train-until", getFlag("train-until", "2025-07-01"));
   const testFromMs = parseDate("test-from", getFlag("test-from", "2025-07-01"));
 
@@ -139,6 +154,11 @@ async function main(): Promise<void> {
   console.log(`[OOS] Bankroll $${bankroll} per window | Margin ${(marginPct * 100).toFixed(0)}%`);
   console.log(`[OOS] PMARP period=${pmarpPeriod} lookback=${pmarpLookback}`);
   console.log(`[OOS] Data dir: ${dataDir}`);
+  console.log(
+    legacyLookahead
+      ? `[OOS] Alignment: LEGACY (pre-S52 lookahead) — archived numbers, NOT a forecast`
+      : `[OOS] Alignment: fixed (last confirmed higher-TF close, matches the live bot)`,
+  );
 
   const collected = await loadBinanceData(dataDir, 700, indicatorParams);
   const aligned = alignBars(
@@ -147,6 +167,7 @@ async function main(): Promise<void> {
     collected.bars4H,
     collected.bars1D,
     collected.backtestStartMs,
+    { legacyLookahead },
   );
   if (aligned.length === 0) {
     console.error("[OOS] No aligned bars — check the data directory.");
@@ -167,8 +188,12 @@ async function main(): Promise<void> {
 
   const scenarios: Scenario[] = [
     { label: "S1 only", strategies: ["S1"] },
+    { label: "S2 only", strategies: ["S2"] },
+    { label: "S3 only", strategies: ["S3"] },
     { label: "S6 only", strategies: ["S6"] },
     { label: "S1 + S6 (live set)", strategies: ["S1", "S6"] },
+    { label: "S1 + S2 + S6", strategies: ["S1", "S2", "S6"] },
+    { label: "All (S1+S2+S3+S6)", strategies: ["S1", "S2", "S3", "S6"] },
     {
       // G5: S6 is a breakout strategy, so it is gated on "sideways" — the chop where
       // breakouts fail. Gating it on "trending" (the S3 polarity) would block the moves
