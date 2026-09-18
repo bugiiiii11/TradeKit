@@ -11,7 +11,7 @@
 - **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$358 USDC, separate account)
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
-- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, repo at `/home/ubuntu/trading-bot` (clean git checkout since S48 — deploy = `git pull` + `pm2 restart trading-bot`). S1+S6 at 1.0x leverage. Back online 2026-08-20 after a 54-day silent WS death (S48); external dead-man cron now alerts Discord `#errors` if bar closes stop.
+- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, repo at `/home/ubuntu/trading-bot` (clean git checkout since S48 — deploy = `git pull` + `pm2 restart trading-bot`). SSH only from the desktop: `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98` (key is not in `~/.ssh`, and the laptop has no copy — use `src/scripts/check_ws_liveness.ts` there). Box is shared with Flash's three Sui liquidators. S1+S6 at 1.0x leverage. Back online 2026-08-20 after a 54-day silent WS death (S48); external dead-man cron now alerts Discord `#errors` if bar closes stop.
 - **Strategy:** BTC perps, S1+S6 active (S2 disabled — net drag per 26mo backtest, S3 disabled, S7 parked). S5 cascade webhook LIVE on VPS (localhost:3456, Flash bots on same machine).
 - **Leverage:** S1=10x, S2=8x, S6=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
@@ -92,6 +92,10 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 | `investigate_balance.ts` | Query Hyperliquid API for fills, funding, ledger events (read-only, any wallet) |
 | `migrate_source_columns.ts` | Add source/target columns for two-bot architecture |
 | `move_s1_sl.ts` | One-off: manually re-trail the live BTC stop (dry-run default, VPS-wallet-guarded). Run ON the VPS: `--price <N> [--confirm]` |
+| `check_ws_liveness.ts` | ssh-free Tier-0 check: newest `Bar closed` in Supabase vs Hyperliquid candle clock (S51) |
+| `check_command_channel.ts` | ssh-free command-channel health: HEALTHY vs FLAPPING over a fixed 2h window — says FLAPPING for ~2h after any fix (S51) |
+| `backtest_oos.ts` | Out-of-sample split: 5-config matrix on train/test windows; needs `--months=55` download (~1 year eaten by daily-PMARP warmup) (S51) |
+| `backtest_lookahead_ab.ts` | A/B of the multi-TF alignment lookahead fix (`71d3422`) |
 
 ## Conventions
 
@@ -105,6 +109,8 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **`pm2 logs --nostream` serves stale buffered lines** — for log liveness read the log FILE (`tail .pm2/logs/trading-bot-out.log`), and use the Hyperliquid latest-candle timestamp as the real clock (don't trust the local machine clock).
 - **pm2 "online" ≠ bar-close loop alive.** Twice (S44: 7d, S48: 54d) the WS loop deadlocked while the process stayed up and the 2h digest said ACTIVE. Every network await in `candle-consumer.ts` (re)connect paths MUST be `withTimeout`-wrapped — including error-path cleanup — and the heartbeat watchdog (`reconnecting` stuck >3 min → `process.exit`) is the backstop. Never add an unguarded await there.
 - **VPS `trades/trade_log.json` is live per-bot data**, flagged `git update-index --skip-worktree` on the VPS. Never `git checkout`/reset it on the box without backing it up first (`~/trade_log.backup.*.json` exists from S48).
+- **Supabase `removeChannel()` fires that channel's own subscribe-callback with `CLOSED`** (realtime-js 2.103). A `CLOSED` handler must ignore channels it is tearing down itself (identity check against the live channel) or it re-arms its own resubscribe forever — the S51/S52 30s flap.
+- **Two machines push to `main` (desktop + laptop).** `git status -sb` only tells the truth after `git fetch`; `/start` now fetches first. Before deploying, diff `HEAD...origin/main` for live-runtime files (`main-headless`, `ws/`, `strategy/`, `risk/`, `hyperliquid/`, `db/`, `webhook/`) — backtest/frontend/script changes don't reach the bot.
 - **pm2-logrotate retain=30** (was 3 — destroyed S48 forensics). Supabase `bot_logs` is the durable log; query it by `source` (`ws`, `main`, `bot-vps`, `commands`, `webhook`).
 - **Margin sizing:** 5% of bankroll as margin, leverage applied on top. Portfolio compounds each trade.
 - **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S6` on VPS (S2 disabled Session 33).
@@ -124,9 +130,9 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - Stop-placement retry on entry failure — NOT IMPLEMENTED (position briefly naked if SL placement fails)
 - Trailing SL breakeven mode with real open position (not yet exercised — only trailing mode validated S43)
 - ~~**Trailing oid capture (`aa15560`, S46)**~~ — **VALIDATED S51.** Live on 2026-09-14: four consecutive `Stop-loss modified: oid=X → Y` (Y ≠ X) ratcheting $77541.5 → $77831.6, each new oid carried into the next modify. Last `Failed to modify SL` was 2026-06-25, i.e. pre-fix. Closed.
-- **Hydration SL/TP by order type (`dbbe9c6`, S48)** — replaced trigger-price-vs-entry with `frontendOpenOrders().orderType`. Not yet exercised on a real restart with a profitable position.
+- **Hydration SL/TP by order type (`dbbe9c6`, S48)** — replaced trigger-price-vs-entry with `frontendOpenOrders().orderType`. S52: a real restart hydrated an open *manual* web-UI position correctly (`[external (skip exit logic)]`, SL + 1 TP). Still not exercised with a profitable *bot* position.
 - **Reconnect watchdog + error-path dispose timeout (`dbbe9c6`, S48)** and **dead-man cron** — all unproven on a real Hyperliquid outage (can't force one). On the next outage, expect either a clean in-process reconnect, or ↺ to climb by one + a Discord alert.
-- **Command-channel auto-resubscribe on `CLOSED`** (S48) — **observed firing continuously, S51.** The channel closes ~30s after every successful subscribe, so the resubscribe path runs ~2,880×/day. It works (the startup sweep claims pending commands each cycle, so the kill switch survives with ~30s latency) but it is masking a real defect and flooding `bot_logs`. See handoff Watchlist.
+- **Command-channel auto-resubscribe on `CLOSED`** (S48) — S51 found it firing every 30s for 27 days (self-inflicted: our own teardown's `CLOSED` re-armed the timer). **Fixed `35e4ce4`, deployed S52** — 2 command rows after restart vs ~4 per 30s. Still unobserved: recovery from a *genuine* server-side close under the fixed code.
 
 **Operational:**
 - Hydration trade-log cross-check with real open position (deployed S32, validated S34+S37 — working correctly)
@@ -153,10 +159,10 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **Dead-man cron (VPS)** — `*/15 * * * *` runs `deploy/deadman-check.cjs` with `node --env-file=.env`. Independent of pm2; if `~/.pm2/logs/deadman.log` stops getting `ok` lines, the safety net itself is down.
 - **tradingview-mcp** — child process of desktop bot, dies with bot
 - **Supabase Realtime** — bot holds WebSocket channel for `bot_commands` INSERT events
-- **Vercel** — `trade-kit.vercel.app`, **NO Git auto-deploy** (verified S51: project has no connected
-  repo; every deployment in history is a manual CLI deploy). A push to `main` does NOT ship the frontend.
-  Deploy = `npx vercel --prod` (project root dir is `frontend`, Node 24.x). Reconnecting GitHub in the
-  Vercel dashboard is the pending fix — until then, pushing and shipping are separate steps.
+- **Vercel** — `trade-kit.vercel.app`. For 157 days the project had no connected repo and every deploy was
+  a manual `npx vercel --prod` (S50's Sprint 1 was "pushed" but never shipped). GitHub reconnected in the
+  dashboard mid-S51 (2026-09-17); pushes to `main` have auto-deployed since. If a push doesn't show up on
+  the site, check the dashboard connection before anything else. Project root dir `frontend`, Node 24.x.
 - **Safety hooks** — all 5 active and wired in `.claude/settings.json` (`jq` installed). `protect-files.sh` blocks Edit/Write to secret files; `block-dangerous.sh` blocks destructive Bash + force-push-to-main + Bash-level `.env`/key reads/exfil (S47); `block-internal-urls.sh` (SSRF), `audit-all.sh` + `scan-injection.sh` (PostToolUse, log to global `~/.claude/safety-audit.jsonl`). Native `deny` list (jq-independent) also blocks `rm -rf`, force-push, `cat .env`, `git add .env`.
 
 ## Security Rules
@@ -167,6 +173,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - Hook `protect-files.sh` blocks Claude from editing `.env*` files
 - RLS policies are `always_true` for single-user — MUST tighten before adding users
 - Main MetaMask private key must NEVER go in `.env` (has full withdrawal permissions)
+- **OCI2 is a shared box:** `/home/ubuntu/flash/*` holds Flash's Sui liquidator wallet keys. A shell as `ubuntu` = those keys. No third-party access; if ever required, a separate user without read access to that tree, key delivered directly (never from repo history).
 
 ## Resuming
 

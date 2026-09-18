@@ -13,7 +13,7 @@ Read these files:
 Note: CLAUDE.md is auto-loaded every message -- do NOT read it again.
 
 Run these commands:
-- `git status -sb` -- uncommitted changes + branch tracking info
+- `git fetch -q origin && git status -sb` -- uncommitted changes + branch tracking info (fetch FIRST: two machines push to main; without it "up to date" is a lie -- S52 started 10 commits behind)
 - `git log --oneline -5` -- recent commits for context
 - `wc -l "C:/Users/mathe/.claude/projects/c--work-TradeKit/memory/MEMORY.md"` -- check memory index size (system invariant: must stay <200 lines or content gets truncated and silently lost). If the file doesn't exist yet, Claude Code auto-creates it on first memory save -- treat absence as "no memory yet".
 
