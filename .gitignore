@@ -32,6 +32,8 @@ ___temp/
 
 # Debug / logs
 debug.log
+# Local backtest console dumps (the durable record is Supabase + docs/polish/)
+backtest-*.log
 
 # OS / editor
 .DS_Store
