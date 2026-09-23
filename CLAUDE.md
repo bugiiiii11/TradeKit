@@ -11,7 +11,7 @@
 - **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$358 USDC, separate account)
 - **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
 - **Network:** mainnet | **Mode:** LIVE
-- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, repo at `/home/ubuntu/trading-bot` (clean git checkout since S48 — deploy = `git pull` + `pm2 restart trading-bot`). SSH only from the desktop: `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98` (key is not in `~/.ssh`, and the laptop has no copy — use `src/scripts/check_ws_liveness.ts` there). Box is shared with Flash's three Sui liquidators. S1+S6 at 1.0x leverage. Back online 2026-08-20 after a 54-day silent WS death (S48); external dead-man cron now alerts Discord `#errors` if bar closes stop.
+- **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, repo at `/home/ubuntu/trading-bot` (clean git checkout since S48 — deploy = `git pull` + `pm2 restart trading-bot`). SSH only from the desktop: `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98`. **The owner works from the LAPTOP ONLY and has no VPS access** (confirmed S53: no `C:/Work/`, no OCI key anywhere on the machine, no Flash checkout; `ssh` → `Permission denied (publickey)`). The desktop lane is Matt's machine. **Every on-box action therefore depends on Matt's availability** — plan sessions so nothing blocks on a shell. From the laptop use the ssh-free checks: `check_ws_liveness.ts`, `check_command_channel.ts`, and the Hyperliquid `info` API for balance/fills. Box is shared with Flash's three Sui liquidators. S1+S6 at 1.0x leverage. Back online 2026-08-20 after a 54-day silent WS death (S48); external dead-man cron now alerts Discord `#errors` if bar closes stop.
 - **Strategy:** BTC perps, S1+S6 active (S2 disabled — net drag per 26mo backtest, S3 disabled, S7 parked). S5 cascade webhook LIVE on VPS (localhost:3456, Flash bots on same machine).
 - **Leverage:** S1=10x, S2=8x, S6=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
@@ -81,7 +81,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 | `test_risk_hydration.ts` | 5-case risk state hydration test |
 | `test_custom_trade.ts` | CLI manual trade with SL + scaled TPs |
 | `backtest.ts` | Strategy replay: `--days 90 --bankroll 500 --margin 5` |
-| `backtest_binance.ts` | 12-month replay: `--bankroll 500 --strategies S1,S2 --pmarp-period 20 --pmarp-lookback 350` |
+| `backtest_binance.ts` | Multi-month replay: `--bankroll 500 --strategies S1,S6 --pmarp-period 20 --pmarp-lookback 350`. `--from/--to <YYYY-MM-DD>` replays ONE window and persists it (file + Supabase); `--train-until/--test-from` print both windows and persist neither |
 | `backtest_relaxed.ts` | A/B filter relaxation: S3 OB/OS 75/25, S2 no 1H-EMA, both — `--bankroll 500 --margin 5` |
 | `backtest_s1_filter.ts` | S1 Daily-EMA200 filter A/B: baseline vs relaxed, portfolio + S1-only isolation |
 | `validate_indicators.ts` | Compare local indicators vs TradingView (needs TV Desktop + CDP) |
@@ -93,7 +93,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 | `migrate_source_columns.ts` | Add source/target columns for two-bot architecture |
 | `move_s1_sl.ts` | One-off: manually re-trail the live BTC stop (dry-run default, VPS-wallet-guarded). Run ON the VPS: `--price <N> [--confirm]` |
 | `check_ws_liveness.ts` | ssh-free Tier-0 check: newest `Bar closed` in Supabase vs Hyperliquid candle clock (S51) |
-| `check_command_channel.ts` | ssh-free command-channel health: HEALTHY vs FLAPPING over a fixed 2h window — says FLAPPING for ~2h after any fix (S51) |
+| `check_command_channel.ts` | ssh-free command-channel health: HEALTHY vs FLAPPING; anchors on the newest close since S52, so a just-deployed fix reads RECOVERED, not FLAPPING |
 | `backtest_oos.ts` | Out-of-sample split: 5-config matrix on train/test windows; needs `--months=55` download (~1 year eaten by daily-PMARP warmup) (S51) |
 | `backtest_lookahead_ab.ts` | A/B of the multi-TF alignment lookahead fix (`71d3422`) |
 
@@ -133,7 +133,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - ~~**Trailing oid capture (`aa15560`, S46)**~~ — **VALIDATED S51.** Live on 2026-09-14: four consecutive `Stop-loss modified: oid=X → Y` (Y ≠ X) ratcheting $77541.5 → $77831.6, each new oid carried into the next modify. Last `Failed to modify SL` was 2026-06-25, i.e. pre-fix. Closed.
 - **Hydration SL/TP by order type (`dbbe9c6`, S48)** — replaced trigger-price-vs-entry with `frontendOpenOrders().orderType`. S52: a real restart hydrated an open *manual* web-UI position correctly (`[external (skip exit logic)]`, SL + 1 TP). Still not exercised with a profitable *bot* position.
 - **Reconnect watchdog + error-path dispose timeout (`dbbe9c6`, S48)** and **dead-man cron** — all unproven on a real Hyperliquid outage (can't force one). On the next outage, expect either a clean in-process reconnect, or ↺ to climb by one + a Discord alert.
-- **Command-channel auto-resubscribe on `CLOSED`** (S48) — S51 found it firing every 30s for 27 days (self-inflicted: our own teardown's `CLOSED` re-armed the timer). **Fixed `35e4ce4`, deployed S52** — 2 command rows after restart vs ~4 per 30s. Still unobserved: recovery from a *genuine* server-side close under the fixed code.
+- ~~**Command-channel auto-resubscribe on `CLOSED`** (S48)~~ — **VALIDATED S53.** S51 found it firing every 30s for 27 days (self-inflicted: our own teardown's `CLOSED` re-armed the timer); fixed `35e4ce4`, deployed S52. On 2026-09-23 two *genuine* server-side closes both recovered cleanly — `Realtime subscription active (recovered after 1 retries)`, one close, one recovery, no cycling. Closed. **Not yet exercised: the `f323afc` backoff** (30s→5min), which only shows itself on a channel that fails repeatedly — watch for `Resubscribing in Ns (attempt N)` with N climbing.
 
 **Operational:**
 - Hydration trade-log cross-check with real open position (deployed S32, validated S34+S37 — working correctly)
@@ -169,6 +169,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 ## Security Rules
 
 - `.env` API wallet key is trade-only (no withdraw) — NEVER read, NEVER commit
+- **`.env` is per-machine and gitignored — THREE separate copies** (laptop, Matt's desktop, VPS `/home/ubuntu/trading-bot/.env`). Editing one changes nothing anywhere else. A key rotation is not finished until all three are updated, and **the VPS copy is unreachable from the laptop**. Create the new key, update every copy, verify, and revoke the old key LAST — an un-revoked old key keeps a missed `.env` working and hides the mistake. The VPS `.env` also feeds the dead-man cron, so a botched rotation kills the WS watchdog **silently**.
 - `SUPABASE_SERVICE_ROLE_KEY` bypasses ALL RLS — bot `.env` only, NEVER in frontend
 - Frontend uses `sb_publishable_...` key (designed to be public, RLS enforced)
 - Hook `protect-files.sh` blocks Claude from editing `.env*` files
