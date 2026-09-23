@@ -61,6 +61,7 @@ async function loadRuns(): Promise<BacktestRun[]> {
           S1: { trades: Number(row.s1_trades) || 0, winRate: Number(row.s1_win_rate) || 0, pnlUsd: Number(row.s1_pnl_usd) || 0 },
           S2: { trades: Number(row.s2_trades) || 0, winRate: Number(row.s2_win_rate) || 0, pnlUsd: Number(row.s2_pnl_usd) || 0 },
           S3: { trades: Number(row.s3_trades) || 0, winRate: Number(row.s3_win_rate) || 0, pnlUsd: Number(row.s3_pnl_usd) || 0 },
+          S6: { trades: Number(row.s6_trades) || 0, winRate: Number(row.s6_win_rate) || 0, pnlUsd: Number(row.s6_pnl_usd) || 0 },
         },
       },
       trades: Array.isArray(row.trades) ? row.trades : [],

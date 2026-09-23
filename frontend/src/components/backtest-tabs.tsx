@@ -181,11 +181,16 @@ export function BacktestTabs({ runs }: { runs: BacktestRun[] }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(["S1", "S2", "S3"] as const).map((s) => {
+                {(["S1", "S2", "S3", "S6"] as const).map((s) => {
                   const row = run.stats.byStrategy[s];
                   if (!row) return null;
                   const pnlBankPct = (row.pnlUsd / run.config.bankroll) * 100;
-                  const label = { S1: "S1 EMA Trend", S2: "S2 Mean Rev", S3: "S3 Stoch RSI" }[s];
+                  const label = {
+                    S1: "S1 EMA Trend",
+                    S2: "S2 Mean Rev",
+                    S3: "S3 Stoch RSI",
+                    S6: "S6 BBWP Breakout",
+                  }[s];
                   return (
                     <TableRow key={s}>
                       <TableCell className="font-medium">{label}</TableCell>

@@ -178,6 +178,7 @@ export async function saveToSupabase(result: BacktestResult): Promise<void> {
   const s1 = stats.byStrategy.S1 ?? { trades: 0, winRate: 0, pnlUsd: 0 };
   const s2 = stats.byStrategy.S2 ?? { trades: 0, winRate: 0, pnlUsd: 0 };
   const s3 = stats.byStrategy.S3 ?? { trades: 0, winRate: 0, pnlUsd: 0 };
+  const s6 = stats.byStrategy.S6 ?? { trades: 0, winRate: 0, pnlUsd: 0 };
 
   const tradesJson = trades.map((t: BacktestTrade) => ({
     ...t,
@@ -213,6 +214,9 @@ export async function saveToSupabase(result: BacktestResult): Promise<void> {
     s3_trades:      s3.trades,
     s3_win_rate:    s3.winRate,
     s3_pnl_usd:    s3.pnlUsd,
+    s6_trades:      s6.trades,
+    s6_win_rate:    s6.winRate,
+    s6_pnl_usd:    s6.pnlUsd,
     trades:         tradesJson,
     equity_curve:   equityCurve,
   };
