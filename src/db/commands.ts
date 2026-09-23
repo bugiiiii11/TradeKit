@@ -70,7 +70,30 @@ let _resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
  */
 let _tearingDown = false;
 
-const RESUBSCRIBE_DELAY_MS = 30_000;
+const RESUBSCRIBE_BASE_MS = 30_000;
+const RESUBSCRIBE_MAX_MS = 300_000;
+/**
+ * A channel that stays SUBSCRIBED this long counts as genuinely recovered and
+ * resets the backoff. Resetting on the SUBSCRIBED event itself would not work:
+ * a channel that subscribes and immediately closes would pin the delay at the
+ * 30s floor forever, which is the shape of the S52 flap.
+ */
+const BACKOFF_RESET_AFTER_MS = 120_000;
+
+let _resubscribeAttempts = 0;
+let _backoffResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 30s, 60s, 120s, 240s, 300s, 300s, ... */
+function nextResubscribeDelayMs(): number {
+  return Math.min(RESUBSCRIBE_BASE_MS * 2 ** _resubscribeAttempts, RESUBSCRIBE_MAX_MS);
+}
+
+function cancelBackoffReset(): void {
+  if (_backoffResetTimer) {
+    clearTimeout(_backoffResetTimer);
+    _backoffResetTimer = null;
+  }
+}
 
 /**
  * A CLOSED channel never comes back on its own (Jun 28 2026: channel closed
@@ -81,6 +104,10 @@ const RESUBSCRIBE_DELAY_MS = 30_000;
  */
 function scheduleResubscribe(ctx: CommandHandlerContext, botSource?: string): void {
   if (_stopped || _resubscribeTimer) return;
+  cancelBackoffReset();
+  const delayMs = nextResubscribeDelayMs();
+  _resubscribeAttempts++;
+  console.warn(`[Commands] Resubscribing in ${delayMs / 1000}s (attempt ${_resubscribeAttempts})`);
   _resubscribeTimer = setTimeout(async () => {
     _resubscribeTimer = null;
     if (_stopped) return;
@@ -102,7 +129,7 @@ function scheduleResubscribe(ctx: CommandHandlerContext, botSource?: string): vo
       console.error("[Commands] Resubscribe failed — will retry:", err);
       scheduleResubscribe(ctx, botSource);
     }
-  }, RESUBSCRIBE_DELAY_MS);
+  }, delayMs);
 }
 
 /**
@@ -185,6 +212,16 @@ export async function startCommandSubscription(
         console.log(msg);
         _realtimeErrorCount = 0;
         _lastRealtimeStatus = status;
+        // Only a subscription that HOLDS counts as recovery — see
+        // BACKOFF_RESET_AFTER_MS.
+        cancelBackoffReset();
+        if (_resubscribeAttempts > 0) {
+          _backoffResetTimer = setTimeout(() => {
+            _backoffResetTimer = null;
+            _resubscribeAttempts = 0;
+          }, BACKOFF_RESET_AFTER_MS);
+          _backoffResetTimer.unref?.();
+        }
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
         _realtimeErrorCount++;
         if (_lastRealtimeStatus !== status) {
@@ -200,7 +237,7 @@ export async function startCommandSubscription(
         // live channel is gone, and acting on them re-arms the timer forever.
         const stale = _channel !== null && chan !== null && chan !== _channel;
         if (!_stopped && !_tearingDown && !stale) {
-          console.warn(`[Commands] Realtime subscription closed — resubscribing in ${RESUBSCRIBE_DELAY_MS / 1000}s`);
+          console.warn("[Commands] Realtime subscription closed");
           scheduleResubscribe(ctx, botSource);
         }
         _lastRealtimeStatus = status;
@@ -219,6 +256,7 @@ export async function stopCommandSubscription(): Promise<void> {
     clearTimeout(_resubscribeTimer);
     _resubscribeTimer = null;
   }
+  cancelBackoffReset();
   if (!_channel) return;
   const supabase = getSupabase();
   if (supabase) {
