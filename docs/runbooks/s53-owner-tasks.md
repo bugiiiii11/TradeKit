@@ -15,15 +15,28 @@ The key bypasses **all** RLS on every table.
 
 ### Who holds this key
 
-| Where | Consumer | Failure mode if it breaks |
-|---|---|---|
-| VPS `/home/ubuntu/trading-bot/.env` | pm2 `trading-bot` | Loud — bot logs Supabase errors |
-| VPS `/home/ubuntu/trading-bot/.env` | **dead-man cron** | **Silent.** Cron doesn't restart or complain. The watchdog that catches a dead WS loop just stops working |
-| Desktop `<repo>/.env` | desktop bot + scripts | Loud |
-| Laptop `<repo>/.env` | scripts only | Loud |
-| Vercel / frontend | — | Not affected. Frontend uses `sb_publishable_...` |
+**Three physical machines, three separate `.env` files.** `.env` is gitignored, so it does NOT
+sync through git — editing it in one clone changes nothing anywhere else. Updating "the .env in
+the project root" only ever fixes the machine you are sitting at.
+
+| Machine | File | Consumer | Failure mode if it breaks |
+|---|---|---|---|
+| **VPS** (`170.9.253.98`) | `/home/ubuntu/trading-bot/.env` | pm2 `trading-bot` | Loud — bot logs Supabase errors |
+| **VPS** (same file) | `/home/ubuntu/trading-bot/.env` | **dead-man cron** | **Silent.** Cron doesn't restart or complain. The watchdog that catches a dead WS loop just stops working |
+| **Desktop** (has `C:/Work/.ssh/`) | `<its own clone>/.env` | desktop bot + scripts | Loud |
+| **Laptop** (no `C:/Work/`) | `<its own clone>/.env` | scripts only | Loud |
+| Vercel / frontend | — | — | Not affected. Frontend uses `sb_publishable_...` |
+
+The VPS is reachable by SSH **only from the desktop** — the key is not on the laptop. So the
+rotation cannot be completed from the laptop: it can update its own `.env` and stop there.
 
 The dead-man row is why the order below ends with "verify before revoking".
+
+### Shell
+
+The verification scripts are plain Node — `npx ts-node src/scripts/...` behaves identically in
+PowerShell and Git Bash. Shell only matters for shell syntax. PowerShell has no `$(date +%F)`;
+use `"$(Get-Date -Format yyyy-MM-dd)"`. Everything on the VPS is Linux bash.
 
 ### Steps
 
@@ -35,17 +48,20 @@ second one and keep both live. That makes this a zero-downtime rotation instead 
 
 Copy the new value immediately — secret keys are shown once.
 
-**A2. Laptop `.env`** — update `SUPABASE_SERVICE_ROLE_KEY`, then prove it works:
+**A2. Laptop `.env`** — update the key in that machine's own clone, then prove it works:
 
-```bash
+```
 npx ts-node src/scripts/check_ws_liveness.ts
 ```
 
 Read-only, and it fails loudly on a bad key. Expect `VERDICT: ALIVE`.
+**Done and verified 2026-09-23.** The laptop leg of this rotation is complete; nothing further
+can be done from that machine, because it cannot reach the VPS.
 
-**A3. Desktop `.env`** — same edit, same check.
+**A3. Desktop `.env`** — same edit in the desktop's own clone, same check. A3 onward all happen
+at the desktop.
 
-**A4. VPS.** Back the file up first:
+**A4. VPS.** Back the file up first (bash, on the box):
 
 ```bash
 ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98
