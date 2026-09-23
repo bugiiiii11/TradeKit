@@ -116,7 +116,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **Margin sizing:** 5% of bankroll as margin, leverage applied on top. Portfolio compounds each trade.
 - **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S6` on VPS (S2 disabled Session 33).
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
-- **S5_ENABLED**, **S5_WEBHOOK_PORT** (default 3456), **S5_WEBHOOK_SECRET** env vars: cascade webhook receiver. Disabled by default.
+- **S5_ENABLED**, **S5_WEBHOOK_PORT** (default 3456), **S5_WEBHOOK_HOST** (default `127.0.0.1` since S53), **S5_WEBHOOK_SECRET** env vars: cascade webhook receiver. Disabled by default. The sender arrives via autossh tunnel on localhost, so loopback is correct; only set `0.0.0.0` if a sender must reach the box directly. Port 3456 and the contract Flash depends on (`GET /health`→200, `POST /webhook/cascade`→`{accepted:true}`) must not change.
 - **S7_FUNDING_FILTER** env var: parked (backtest -$3 PnL). Do not enable without new validation.
 - **TRAILING_MODE** env var: `off|breakeven|trailing` (default: `off`, VPS: `trailing` since S43). Breakeven moves SL to entry+buffer once price moves ≥ TRAILING_DISTANCE in our favor (one-shot). Trailing mode follows mark price at TRAILING_DISTANCE, ratchet-only (continuous).
 - **TRAILING_DISTANCE** env var: activation threshold as fraction (default: `0.02` = 2%).
