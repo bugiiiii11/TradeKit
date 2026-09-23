@@ -26,6 +26,14 @@ export function resetCascadeHeartbeatCount(): void {
 interface WebhookConfig {
   port: number;
   secret: string;
+  /**
+   * Interface to bind. Defaults to loopback: the S5 sender reaches us through
+   * an autossh tunnel, which arrives on localhost, so binding 0.0.0.0 only
+   * widened the attack surface — until S53 the port was exposed to the whole
+   * OCI VCN and kept private by nothing but a firewall rule. Set to "0.0.0.0"
+   * only if a sender ever needs to reach the box directly.
+   */
+  host?: string;
 }
 
 function parseBody(req: http.IncomingMessage): Promise<string> {
@@ -143,8 +151,9 @@ export function startWebhookServer(config: WebhookConfig): http.Server {
     }
   });
 
-  server.listen(config.port, () => {
-    console.log(`[Webhook] Listening on port ${config.port}`);
+  const host = config.host ?? "127.0.0.1";
+  server.listen(config.port, host, () => {
+    console.log(`[Webhook] Listening on ${host}:${config.port}`);
   });
 
   return server;

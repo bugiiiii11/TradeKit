@@ -72,6 +72,7 @@ let LEVERAGE_MULT = parseFloat(process.env.LEVERAGE_MULT ?? "0.25");
 const S7_FUNDING_FILTER = (process.env.S7_FUNDING_FILTER ?? "false").toLowerCase() === "true";
 const S5_ENABLED = (process.env.S5_ENABLED ?? "false").toLowerCase() === "true";
 const S5_WEBHOOK_PORT = parseInt(process.env.S5_WEBHOOK_PORT ?? "3456", 10);
+const S5_WEBHOOK_HOST = process.env.S5_WEBHOOK_HOST ?? "127.0.0.1";
 const S5_WEBHOOK_SECRET = process.env.S5_WEBHOOK_SECRET ?? "";
 
 const TRAILING_MODE: TrailingMode = (process.env.TRAILING_MODE ?? "off") as TrailingMode;
@@ -921,7 +922,7 @@ async function main(): Promise<void> {
   console.log(`[Bot-VPS] Leverage multiplier: ${LEVERAGE_MULT}x (S1=${Math.max(1,Math.round(10*LEVERAGE_MULT))}x, S2=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x, S3=${Math.max(1,Math.round(5*LEVERAGE_MULT))}x, S6=${Math.max(1,Math.round(8*LEVERAGE_MULT))}x)`);
   console.log(`[Bot-VPS] Bankroll: $${STARTING_BANKROLL}`);
   console.log(`[Bot-VPS] S7 funding filter: ${S7_FUNDING_FILTER ? "ON" : "OFF"}`);
-  console.log(`[Bot-VPS] S5 cascade: ${S5_ENABLED ? `ON (port ${S5_WEBHOOK_PORT})` : "OFF"}`);
+  console.log(`[Bot-VPS] S5 cascade: ${S5_ENABLED ? `ON (${S5_WEBHOOK_HOST}:${S5_WEBHOOK_PORT})` : "OFF"}`);
   console.log(`[Bot-VPS] Trailing SL: ${TRAILING_MODE} (distance=${(TRAILING_DISTANCE * 100).toFixed(1)}%, buffer=${(BREAKEVEN_BUFFER * 100).toFixed(1)}%)`);
   console.log(`[Bot-VPS] Source tag: ${BOT_SOURCE}`);
 
@@ -986,7 +987,7 @@ async function main(): Promise<void> {
   // S5 webhook server (only if enabled + secret configured)
   let webhookServer: ReturnType<typeof startWebhookServer> | null = null;
   if (S5_ENABLED && S5_WEBHOOK_SECRET) {
-    webhookServer = startWebhookServer({ port: S5_WEBHOOK_PORT, secret: S5_WEBHOOK_SECRET });
+    webhookServer = startWebhookServer({ port: S5_WEBHOOK_PORT, host: S5_WEBHOOK_HOST, secret: S5_WEBHOOK_SECRET });
   } else if (S5_ENABLED && !S5_WEBHOOK_SECRET) {
     console.warn("[Bot-VPS] S5 enabled but S5_WEBHOOK_SECRET not set — webhook server NOT started");
   }
