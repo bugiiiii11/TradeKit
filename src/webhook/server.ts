@@ -125,9 +125,15 @@ export function startWebhookServer(config: WebhookConfig): http.Server {
       }
 
       const sig = result.signal!;
+      // Full precision on both money fields, and log aggregate debt too.
+      // Until S53 this line rounded impact to whole millions and dropped
+      // aggregateDebtUsd entirely, so 4.5 months of heartbeats cannot answer
+      // "what threshold should we grade on" -- bot_logs is the only place
+      // these values are ever persisted. See handoff row 4.
       console.log(
         `[Webhook] Cascade received: severity=${sig.severity} ` +
-        `impact=$${(sig.estimatedImpactUsd / 1e6).toFixed(0)}M ` +
+        `impact=$${(sig.estimatedImpactUsd / 1e6).toFixed(2)}M ` +
+        `debt=$${(sig.aggregateDebtUsd / 1e6).toFixed(2)}M ` +
         `imminent=${sig.imminentCount} chains=${sig.chains.join(",") || "unknown"}`,
       );
       cascadeHeartbeatCount++;
