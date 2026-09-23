@@ -16,12 +16,19 @@
  *   --data-dir <path>  Path to Binance CSV directory (default: ./data/bt-data)
  *   --train-until <YYYY-MM-DD>  End of the in-sample window (exclusive)
  *   --test-from   <YYYY-MM-DD>  Start of the out-of-sample window (inclusive)
+ *   --from <YYYY-MM-DD>  Replay only bars at/after this date (inclusive)
+ *   --to   <YYYY-MM-DD>  Replay only bars before this date (exclusive)
  *
  * G3 (S51): pass both split flags to report train and test windows side by side.
  * Parameters may be tuned on the train window only; the test window is report-only.
  * Indicators are computed across the whole dataset before splitting, which is safe
  * because every indicator here looks strictly backwards -- the split slices the
  * replay, not the warmup, so the test window keeps correct indicator state.
+ *
+ * --train-until/--test-from PRINT both windows and persist neither. Use --from/--to
+ * to replay one window and save it (file + Supabase) -- that is how the out-of-sample
+ * numbers reach the dashboard, rather than a full-history run nobody should read as a
+ * forecast. Same warmup guarantee: indicators are computed before the slice.
  */
 
 import * as dotenv from "dotenv";
@@ -91,6 +98,8 @@ async function main(): Promise<void> {
   const strategiesRaw = getFlag("strategies", "S1,S2,S3");
   const trainUntil = getFlag("train-until", "");
   const testFrom = getFlag("test-from", "");
+  const fromDate = getFlag("from", "");
+  const toDate = getFlag("to", "");
   const enabledStrategies = strategiesRaw.split(",").map(s => s.trim()) as StrategyId[];
 
   const indicatorParams: IndicatorParams = { pmarpPeriod, pmarpLookback };
@@ -123,9 +132,33 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Optional replay window. Applied AFTER alignment so indicator warmup still
+  // uses the full dataset -- slicing the replay, never the warmup.
+  let replay = aligned;
+  if (fromDate || toDate) {
+    const fromMs = fromDate ? Date.parse(`${fromDate}T00:00:00Z`) : NaN;
+    const toMs = toDate ? Date.parse(`${toDate}T00:00:00Z`) : NaN;
+    if (fromDate && !Number.isFinite(fromMs)) {
+      console.error(`[Backtest-Binance] --from is not a valid YYYY-MM-DD date: ${fromDate}`);
+      process.exit(1);
+    }
+    if (toDate && !Number.isFinite(toMs)) {
+      console.error(`[Backtest-Binance] --to is not a valid YYYY-MM-DD date: ${toDate}`);
+      process.exit(1);
+    }
+    replay = aligned.filter(a =>
+      (!Number.isFinite(fromMs) || a.bar15m.timestamp >= fromMs) &&
+      (!Number.isFinite(toMs) || a.bar15m.timestamp < toMs));
+    if (replay.length === 0) {
+      console.error("[Backtest-Binance] --from/--to selected no bars.");
+      process.exit(1);
+    }
+    console.log(`[Backtest-Binance] Replay window: ${replay.length} bars of ${aligned.length}`);
+  }
+
   // Calculate approximate days from aligned bars
-  const firstTs = aligned[0].bar15m.timestamp;
-  const lastTs = aligned[aligned.length - 1].bar15m.timestamp;
+  const firstTs = replay[0].bar15m.timestamp;
+  const lastTs = replay[replay.length - 1].bar15m.timestamp;
   const days = Math.round((lastTs - firstTs) / (24 * 60 * 60_000));
   console.log(`[Backtest-Binance] Window: ${days} days (${new Date(firstTs).toISOString().split("T")[0]} → ${new Date(lastTs).toISOString().split("T")[0]})`);
 
@@ -159,7 +192,7 @@ async function main(): Promise<void> {
 
   // Step 3: replay
   console.log(`[Backtest-Binance] Running strategy replay...`);
-  const result = runBacktest(aligned, config);
+  const result = runBacktest(replay, config);
   console.log(`[Backtest-Binance] Replay complete — ${result.trades.length} trades`);
 
   // Step 4: output
