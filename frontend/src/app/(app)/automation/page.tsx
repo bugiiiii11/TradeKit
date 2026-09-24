@@ -63,10 +63,7 @@ export default async function AutomationPage() {
     (c) => c.status === "pending" || c.status === "running",
   ).length;
 
-  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-  const last24h = commands.filter(
-    (c) => new Date(c.issued_at).getTime() >= dayAgo,
-  ).length;
+  const last24h = countIssuedWithin(commands, 24 * 60 * 60 * 1000);
 
   return (
     <>
@@ -281,6 +278,12 @@ function StatusBadge({ status }: { status: CommandStatus }) {
     default:
       return <Badge variant="outline">pending</Badge>;
   }
+}
+
+function countIssuedWithin(commands: BotCommand[], windowMs: number): number {
+  const cutoff = Date.now() - windowMs;
+  return commands.filter((c) => new Date(c.issued_at).getTime() >= cutoff)
+    .length;
 }
 
 function formatDuration(
