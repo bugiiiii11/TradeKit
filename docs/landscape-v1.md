@@ -72,8 +72,8 @@ yield on the ~98% of the balance the bot never uses. And nothing is actionable u
 
 | # | decision | numbers | H's answer |
 |---|---|---|---|
-| D1 | Is the VPS meant to trade at all? | 0 of 20 orders since 10-18; nothing at risk meanwhile | |
-| D2 | Strategy set after P-1 | S6 -$27.47 live, PF 1.05 at zero fee; S1 +$12.62 OOS on 13 trades, fails on alts | |
+| D1 | Is the VPS meant to trade at all? | 0 of 20 orders since 10-18; nothing at risk meanwhile | **YES** (S55, 2026-11-03) — to keep the live pipeline exercised and watched, not as a return case. Blocked on Neo (controls `0x5642…`) approving a new agent. |
+| D2 | Strategy set after P-1 | S6 -$27.47 live, PF 1.05 at zero fee; S1 +$12.62 OOS on 13 trades, fails on alts | **S1 only** (S55, 2026-11-03) — `ENABLED_STRATEGIES=S1` at the row-2 restart; S6 killed. |
 | D3 | Top-up? | size changes only the magnitude of -$1.08/trade | |
 | D4 | Protocol-lending risk on idle USDC (C6)? | ~98.5% idle; ~$4/yr at $103 | |
 | D5 | Spend 1-2 h on Q3 and/or C8's flip test? | pre-registered backtests, no money | |
