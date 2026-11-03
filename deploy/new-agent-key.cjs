@@ -13,7 +13,6 @@
 // `pm2 restart trading-bot`.
 
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { generatePrivateKey, privateKeyToAccount } = require("viem/accounts");
 
@@ -47,19 +46,17 @@ if (dryRun) {
   process.exit(0);
 }
 
-const mode = fs.statSync(envPath).mode & 0o777;
-const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const backup = path.join(os.homedir(), `env.backup.${stamp}`);
-fs.writeFileSync(backup, original, { mode: 0o600 });
+// Same backup convention as env-set-from-file.cjs: env.bak-<stamp>, mode 600, next to the env file (gitignored).
+const dir = path.dirname(envPath);
+const stamp = new Date().toISOString().replace(/[-:.]/g, "").replace("Z", "");
+const backup = path.join(dir, `env.bak-${stamp}`);
+fs.writeFileSync(backup, original, { mode: 0o600, flag: "wx" });
 
-const tmp = `${envPath}.tmp-${process.pid}`;
-fs.writeFileSync(tmp, lines.join(eol), { mode });
+const tmp = path.join(dir, `.envset-${process.pid}.tmp`);
+fs.writeFileSync(tmp, lines.join(eol), { mode: 0o600 });
 fs.renameSync(tmp, envPath); // atomic: the dead-man cron never reads a half-written file
+fs.chmodSync(envPath, 0o600);
 
-console.log("New agent key written to .env (not shown).");
-console.log(`Old .env backed up to ${backup} (mode 600).`);
-console.log("");
-console.log(`AGENT ADDRESS (send this to Neo): ${address}`);
-console.log("");
-console.log("Next: put the new sb_secret_… in SUPABASE_SERVICE_ROLE_KEY, set ENABLED_STRATEGIES=S1,");
-console.log("then tell Claude 'done' — it restarts the bot and runs the checks.");
+console.log(`${VAR}: replaced (value not shown), backup ${path.basename(backup)}`);
+console.log(`AGENT ADDRESS (master-wallet owner approves this in the Hyperliquid UI): ${address}`);
+console.log("Nothing is restarted: the running bot keeps its old key until `pm2 restart trading-bot`.");

@@ -48,3 +48,8 @@ Thumbs.db
 # Shared config lives in .claude/settings.json (committed)
 .claude/settings.local.json
 context-pin.md
+
+# Env backups + temp files from deploy/env-set-from-file.cjs and deploy/new-agent-key.cjs (contain secrets)
+env.bak-*
+.envset-*.tmp
+.tk-*
