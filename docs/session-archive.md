@@ -1,7 +1,33 @@
 # TradeKit — Session Archive
 
-> Historical session notes (Sessions 1-16, 23-27, 29-46, 48). Moved from handoff.md to keep it lean.
+> Historical session notes (Sessions 1-16, 23-27, 29-46, 48, 52). Moved from handoff.md to keep it lean.
 > For current work, see handoff.md. For project context, see CLAUDE.md.
+
+---
+
+## What Was Done (Session 52) — Flap fix deployed; VPS reachable from the desktop; Flash cross-check
+
+*Ran on the desktop (the machine with the VPS key), starting from a clone 10 commits behind — `/start` reported "up to date" because it never fetched. S50/S51 (laptop) were invisible until a push was rejected. Lesson folded into `/start` (fetch first).*
+
+- **Tier-0 checks from the box, all green** (01:06Z): bar-close loop current vs exchange clock, pm2 ↺=45 stable since Aug 20, dead-man cron `ok` every 15 min, crontab intact. First on-box verification since S48.
+- **SSH solved, no new key needed.** The OCI key lives only on the desktop at `C:/Work/.ssh/ssh-key-2026-03-11.key` (documented in Flash's `.claude/reference.md`, not TradeKit). S51's row 3 said the public key was in `5d0d1c3` — that commit exists but holds no key material; nothing was ever committed. Box never moved (Contabo is a Flash-only box). Neo's relayed request is therefore answered: the checks he asked for are done. **Granting Neo a shell is Martin's call** — Flash's position is no third-party shell on OCI2 (its Sui liquidator wallet keys live under `/home/ubuntu/flash/`); if ever needed, a separate user with no read access there.
+- **Command-channel flap: root-caused independently, then found already fixed upstream.** Log timestamps were 30.000s apart to the millisecond — our own `RESUBSCRIBE_DELAY_MS`, not a heartbeat. `removeChannel()` fires the old channel's subscribe-callback with `CLOSED`; the handler re-armed the timer, which then killed the healthy new channel every 30s since one genuine close on 2026-08-22 21:39Z (27 days, ~11.5k rows/day, 96% of `bot_logs`). S51's `35e4ce4` fixes the same mechanism and was verified against live Supabase with an induced close, so it was deployed instead of the desktop's duplicate (parked locally on branch `keep/s52-commands-backoff` — adds backoff 30s→5min + `CLOSED` dedupe; follow-up).
+- **Deployed `71d3422` to the VPS** (`git pull --ff-only` + `pm2 restart`, ↺ 45→46). Only one live-runtime file changed (`commands.ts`; `types.ts` is a type-only import in `candle-consumer.ts`; tree type-checks clean). Result: **2 command rows since restart** (sweep + active) where the old code wrote ~4 per 30s. First post-restart bar close confirmed (see Watchlist row 1).
+- **Hydration on a real restart:** open position is a **manual** web-UI long (0.0026 BTC @ $76,873, 10x, SL $75,800, 1 TP, opened 2026-09-17 17:28Z) — hydrated as `[external (skip exit logic)]`, correct. Bankroll hydrated $349.56. In-profit *bot* position hydration still unexercised.
+- **Flash cross-check** (briefs in `c:/work/Flash/___temp/tradekit-brief-2026-09-18.md` + `flash-reply-…md`): S5 `high` is crash-only by design (needs >10 imminent AND >$50M imminent debt; Sept peak $5.87M) — 4 months of `medium` is expected. Flash recommends grading severity on our side from the hourly heartbeat's `estimated_impact_usd`. Box hygiene from Flash: stray `pm2 monit trading-bot` PID 311582 running 142 days; webhook binds `*:3456` with an iptables ACCEPT — only the OCI VCN keeps it private; bind `127.0.0.1` (tunnel arrives on localhost). Port-3456 contract must not change: `GET /health`→200, `POST /webhook/cascade`→`{accepted:true}`.
+- **S51's `check_command_channel.ts` reports FLAPPING for ~2h after a fix** — fixed 2h window, pre-restart rows dominate. Trust rows-since-restart instead until it gets a since-last-active mode.
+
+**Laptop lane, same day (ran in parallel; commits `35e4ce4` → `b9a252d`):**
+
+- **Found the command flap independently and fixed it** (`35e4ce4`, the commit the desktop then deployed). Proved it against live Supabase both ways: unpatched, one induced close produced closes at +9/+39/+69/+99/+129s; patched, one close → one recovery → stable. Verified from here after the deploy: **0 command rows in 2h**, down from 956.
+- **Root-caused the S6 live-vs-backtest divergence — and the answer invalidated every backtest this project has ever run** (`71d3422`). `aggregator.ts` timestamps buckets by START, so `aligner.ts` picking "timestamp <= now" attached the **still-forming** higher-TF bar and handed the engine its final close: up to 45min/3h45m/23h45m of future data on 1H/4H/1D, every bar, every strategy. Smoking gun: 27/27 S6 entries landed exactly on the hour (fixed: 0/29; live: 4/22). The live bot was never affected — `aggregate()` drops an incomplete final bucket.
+- **Both halves of the divergence dissolved.** "Half the trade rate" was calendar days including the 66-day S48 outage — over the 56.5 days the bot was actually alive it is 22 live vs 27 backtest. The win-rate gap fell from 16 points to 6 on n=22, i.e. noise.
+- **Corrected matrix run and recorded** (`docs/polish/s52-corrected-matrix.md`; `backtest_oos.ts` extended with S2/S3/all-four scenarios + `--legacy-lookahead`, which reproduces S51's published figures **exactly** — confirming the alignment fix is the only variable). Out-of-sample: live set S1+S6 **PF 1.99 → 1.03** (+$265.74 → +$8.88). S6+regime **7.28 → 0.82**, i.e. a fitted filter (in-sample 1.45) — S51's rejection was right for the wrong reason. S3 stays dead, S2 stays parked. S1 alone is the only config positive in both windows and beats the live set on PF/Sharpe/DD, but on 32 trades in 3.6 years.
+- **Owner decision: keep S1+S6 running for now.** Nothing on the bot was touched. Leverage (row 6) stays frozen — multiplying variance around a zero mean is the one clearly wrong move.
+- **Frontend row 14 shipped** (`b9a252d`): the trades scoreboard was flagging live S6 red against pre-fix references (S6 46% WR / PF 1.59) that never existed; replaced with the corrected out-of-sample set, plus a `thin` marker that suppresses the flag for S1's 13-trade reference. Backtests page banners any stored run from before 2026-09-18. Gates: tsc/eslint/build 0.
+- **Row 3(b) closed** — `check_command_channel.ts` now anchors its verdict on the newest close, so a just-deployed fix reads RECOVERED instead of FLAPPING. Onset date corrected to the desktop's on-box finding (2026-08-22 21:39Z).
+- ⚠️ **`SUPABASE_SERVICE_ROLE_KEY` leaked into a session transcript** (a Realtime debug logger printed the socket URL, which carries `?apikey=`). Owner deferred rotation — now handoff row 13. Not exposed anywhere else.
+- ⚠️ **Branch `keep/s52-commands-backoff` is not on origin and not on this laptop.** If it only ever existed on the desktop, row 3(a) dies with that working tree — push it.
 
 ---
 
