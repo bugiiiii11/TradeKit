@@ -75,3 +75,28 @@
    separate the Q1 code change from C5's gated restart.
 7. **§9:** add A's unresolved spot-vs-futures data-source dispute (non-blocking), and say which funding figure the §3
    costs line uses.
+
+## Round 4b -- re-check of the 7 points (2026-11-03)
+
+1. **Fixed.** C8 is now `[B R2]`, the pair count reads 9, and the false "only pair positive" line is replaced by
+   three pairs above 1.0. C8 is CLOSED, with the pre-registered DOGE/ADA/LINK replay as its flip (§4, §5, §8).
+2. **Fixed.** Q3 is `[B R2]` for the stop point, A's vol-targeted-basket caveat is in words, and the ATR design is
+   `[merger]`. C2's flip text no longer says "the one caveat both seats left standing".
+3. **Fixed.** Q2 is `[B-only]` with A's answer as `[A R2]`; the runbook pointer and "C7 cannot be decided" are
+   `[merger]`.
+4. **Fixed.**
+   - The S6 clause is split: signal-dead `[B-only]`, PF 1.05 `[BOTH]`, with "met A3's gate by the letter".
+   - HLP is described as joinable as a depositor, and the verdict now says "only *sure* positive number".
+   - Flips (a) and (b) are tagged `[merger]`, and (d) points to C6.
+   - Optional: §11 item 3 still says "the one positive number" without "sure".
+5. **Fixed.** C11 and C13 carry A8/A9 and A11/A12 flips as separate lines with kinds, in both §4 and §8.
+6. **Fixed.** The Supabase rotation is `[merger]` from C's prior. The Q1 code change is deployed only after C5's
+   gate passes (C5 scope and §11 item 1). B's "if it fails" text is restored, and the 180-day theory is `[merger]`,
+   unverified.
+7. **Fixed.** §9 #7 records the spot-vs-futures dispute as unresolved and non-blocking. The §3 costs line names B R2
+   answer 4 (+$0.08) over B R1's +$0.011.
+
+The nits on C1 ($0.5/yr at $103) and C14 (cites an H-decision line) were also applied. Counts reconcile: BUILD 2,
+EVALUATE 1, MONITOR 4, CLOSED 8, 15 rows.
+
+**Verdict: SHIP-READY.**

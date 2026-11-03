@@ -293,7 +293,7 @@ book depth; sizing floor ($25 / $20); OCI2 headroom (0.04% CPU, 346 MB, 20% disk
    observations instead of 26 and kept counting through the dead weeks. S6 keeps running on paper; S1 runs live at
    $103 as a zero-cost default, not as an investment.
 3. **Do not fund a new strategy this quarter.** Every candidate measured here is break-even or worse, and the one
-   positive number on either page is lending the ~98% of the balance the bot never touches (C6, your risk call,
+   *sure* positive number on either page is lending the ~98% of the balance the bot never touches (C6, your risk call,
    ~$4/yr at today's size). The two cheap backtests worth your "yes" are pre-registered and cost 1-2 h each: a
    volatility-scaled stop for the alt basket (Q3) and S6 on three named alts, which is the flip test for the now-
    closed C8. Send Flash the `high`-gate question (Q2) -- two minutes, and it decides whether the cascade feed is

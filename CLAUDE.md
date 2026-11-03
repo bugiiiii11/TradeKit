@@ -5,14 +5,14 @@
 
 ## Current State
 
-- **Bankroll:** ~$500 USDC on Hyperliquid mainnet (desktop Perps account)
+- **Bankroll:** desktop Perps account ~$0.66 (idle since Oct 2026); VPS account **~$103** after a $260 withdrawal on 2026-11-02
 - **Master wallet:** `0x3a8a318097017aCE0db8276ea435F26DE8674C46` (MetaMask)
-- **API wallet:** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (trade-only, no withdraw)
-- **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (~$358 USDC, separate account)
-- **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only)
-- **Network:** mainnet | **Mode:** LIVE
+- **API wallet:** `0x1BDd4abA4232e724a28dda11b0584Db6F1eDb8aD` (trade-only, no withdraw) — **no agent registered on-chain as of 2026-11-03** (`extraAgents` = `[]`)
+- **VPS master:** `0x5642A41938903483486085D3672535e3a7044110` (separate account)
+- **VPS agent:** `0x483dd299871d13551AD687E39c3F2Cd40D649369` (trade-only) — **EXPIRED/unregistered since 2026-10-18**: the bot has placed no order since; every signal fails with `User or API Wallet … does not exist`. **Hyperliquid API wallets have a max validity of 180 days** — re-approve before expiry and calendar it. Health checks (dead-man, WS loop, digest) do NOT see this; verify with the `extraAgents` info query.
+- **Network:** mainnet | **Mode:** LIVE (but unable to trade until the agent is re-approved — handoff row 2)
 - **VPS bot:** LIVE on OCI ARM #2 (`170.9.253.98`), pm2 id=5, repo at `/home/ubuntu/trading-bot` (clean git checkout since S48 — deploy = `git pull` + `pm2 restart trading-bot`). SSH only from the desktop: `ssh -i C:/Work/.ssh/ssh-key-2026-03-11.key ubuntu@170.9.253.98`. **The owner works from the LAPTOP ONLY and has no VPS access** (confirmed S53: no `C:/Work/`, no OCI key anywhere on the machine, no Flash checkout; `ssh` → `Permission denied (publickey)`). The desktop lane is Matt's machine. **Every on-box action therefore depends on Matt's availability** — plan sessions so nothing blocks on a shell. From the laptop use the ssh-free checks: `check_ws_liveness.ts`, `check_command_channel.ts`, and the Hyperliquid `info` API for balance/fills. Box is shared with Flash's three Sui liquidators. S1+S6 at 1.0x leverage. Back online 2026-08-20 after a 54-day silent WS death (S48); external dead-man cron now alerts Discord `#errors` if bar closes stop.
-- **Strategy:** BTC perps, S1+S6 active (S2 disabled — net drag per 26mo backtest, S3 disabled, S7 parked). S5 cascade webhook LIVE on VPS (localhost:3456, Flash bots on same machine).
+- **Strategy:** BTC perps, S1+S6 active on the VPS (S2 disabled, S3 disabled, S7 parked). **Landscape Campaign v1 (S54, `docs/landscape-v1.md`): S6 = KILL** (live PF 0.26, PF 1.05 even at zero fee), **S1 = zero-cost default, not an edge** (positive on BTC, fails on ETH/SOL/XRP); switch to `ENABLED_STRATEGIES=S1` at the next restart. S5 cascade webhook LIVE on VPS (localhost:3456, Flash bots on same machine) — 955/955 heartbeats `medium`; `high` has never arrived.
 - **Leverage:** S1=10x, S2=8x, S6=8x | **Sizing:** 5% margin-based | Hyperliquid requires integer leverage
 - **PMARP:** period=20, lookback=350 (fixed from wrong 50/200 defaults — Session 21)
 - **S3 diagnostics:** enabled (Session 22) — logs every StochRSI cross with filter results
@@ -64,7 +64,7 @@ Desktop Bot (src/main.ts)                 VPS Bot (src/main-headless.ts)
 - Supabase clients: `lib/supabase/client.ts` (browser), `server.ts` (SSR), `proxy.ts` (auth)
 - Config: `frontend/next.config.js` (CJS only — see Conventions)
 
-**Config & docs:** `BTC_TRADING_STRATEGY_KB.md` (strategy source of truth), `.env` (secrets — NEVER read/commit), `launch_tradingview.ps1` (TV with CDP), `FRONTEND_ANALYSIS.md` (frontend architecture), `docs/grid-trading-lessons-flash.md` (Flash project grid lessons for S4)
+**Config & docs:** `BTC_TRADING_STRATEGY_KB.md` (strategy source of truth), `.env` (secrets — NEVER read/commit), `launch_tradingview.ps1` (TV with CDP), `FRONTEND_ANALYSIS.md` (frontend architecture), `docs/grid-trading-lessons-flash.md` + `docs/s4-grid-backtest-analysis.md` (grid: killed S29, 9 configs negative), **`docs/landscape-v1.md`** (what to build next — living candidate table, decisions D1–D10; evidence frozen in `docs/collab/landscape-v1/`), `docs/polish/s52-corrected-matrix.md` (corrected backtest numbers)
 
 ## Test Scripts
 
@@ -112,7 +112,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 - **Supabase `removeChannel()` fires that channel's own subscribe-callback with `CLOSED`** (realtime-js 2.103). A `CLOSED` handler must ignore channels it is tearing down itself (identity check against the live channel) or it re-arms its own resubscribe forever — the S51/S52 30s flap.
 - **Two machines push to `main` (desktop + laptop).** `git status -sb` only tells the truth after `git fetch`; `/start` now fetches first. Before deploying, diff `HEAD...origin/main` for live-runtime files (`main-headless`, `ws/`, `strategy/`, `risk/`, `hyperliquid/`, `db/`, `webhook/`) — backtest/frontend/script changes don't reach the bot.
 - **pm2-logrotate retain=30** (was 3 — destroyed S48 forensics). Supabase `bot_logs` is the durable log; query it by `source` (`ws`, `main`, `bot-vps`, `commands`, `webhook`).
-- **Higher-TF bars are timestamped by bucket START** (`aggregator.ts`), so "the last bar with `timestamp <= now`" is the bar still FORMING, not the last closed one. Reading it hands the engine that bar's final close — up to 45min/3h45m/23h45m of future data on 1H/4H/1D. This was live in `aligner.ts` for the whole project until S52 (`71d3422`) and inflated **every** backtest number ever produced here (live set out-of-sample: PF 1.99 → 1.03). A higher-TF bar counts as confirmed only once `timestamp + intervalMs <= decisionTime`, where decisionTime is `bar15m.timestamp + 15m` (the engine enters at `bar15m.close`). The live bot is not affected — `aggregate()` drops an incomplete final bucket. Never compare a 15m timestamp directly against a higher-TF bucket start. `alignBars(..., { legacyLookahead: true })` reproduces the old numbers for archive comparison only.
+- **Higher-TF bars are timestamped by bucket START** (`aggregator.ts`), so "the last bar with `timestamp <= now`" is the bar still FORMING, not the last closed one. Reading it hands the engine that bar's final close — up to 45min/3h45m/23h45m of future data on 1H/4H/1D. This was live in `aligner.ts` for the whole project until S52 (`71d3422`) and inflated **every** backtest number ever produced here (live set out-of-sample: PF 1.99 → 1.03). A higher-TF bar counts as confirmed only once `timestamp + intervalMs <= decisionTime`, where decisionTime is `bar15m.timestamp + 15m` (the engine enters at `bar15m.close`). **The live bot has its own, smaller version of this (found S54, UNFIXED):** `candle-consumer.ts` pushes the just-opened 15m bar into the buffer *before* aggregating, and `aggregate()` only drops a final bucket that is short by count — so at the last slot (xx:45 for 1H, 03:45/07:45/… for 4H, 23:45 for 1D) the higher-TF bar is emitted with a provisional close, and `snap15m` is the just-opened bar. Fix: aggregate `buffer.slice(0, -1)` and gate S1/S6 on the higher-TF timestamp changing (handoff row 3). Never compare a 15m timestamp directly against a higher-TF bucket start. `alignBars(..., { legacyLookahead: true })` reproduces the old numbers for archive comparison only.
 - **Margin sizing:** 5% of bankroll as margin, leverage applied on top. Portfolio compounds each trade.
 - **ENABLED_STRATEGIES** env var: comma-separated list (default `S1,S2,S3`). Currently `S1,S6` on VPS (S2 disabled Session 33).
 - **S1_SKIP_DAILY_EMA200** env var: set `true` to remove Daily-EMA200 requirement from S1 (default `false`).
@@ -150,7 +150,7 @@ All in `src/scripts/`. Run with `npx ts-node src/scripts/<name>.ts`.
 
 **Portfolio:** max concurrent=3, max exposure=60%, daily DD=10%→24h pause, weekly DD=15%→48h pause, consecutive losses=3→4h pause
 
-**Per-trade:** 5% margin × strategy leverage (S1: 10x→$358, S2: 8x→$286, S6: 8x→$286 notional at ~$358 VPS bankroll)
+**Per-trade:** 5% margin × strategy leverage (at ~$103: S1 10x→$52, S6 8x→$41 notional). Floors: S6 needs ≥$25 bankroll, S1 ≥$20 (Hyperliquid $10 min order; no guard in our code). Fees, slippage and book depth are size-invariant below ~$50k notional (measured S54) — bankroll size is not a lever.
 
 ## Background Processes
 
